@@ -4,21 +4,14 @@
 #include <math.h>
 #include <sys/io.h>
 #include <unistd.h>
+
+#include "fan_curve.h"
+
 using namespace std;
 
 #define EC_COMMAND_PORT 0x66
 #define EC_DATA_PORT 0x62
 #define TEMP 0x9E
-
-#define FAN_MIN_VALUE 40 // minimal rotation speed of the fan (0-255)
-#define FAN_OFF_TEMP 70  // temp below which fan is off
-#define FAN_MAX_TEMP 90  // at which temperature the fan should be maximum ?
-#define FAN_START_VALUE                                                        \
-  100 // speed (between 0 and 255) at which fan will turn when FAN_OFF_TEMP is
-      // reached
-#define FAN_PEAK_HOLD_TIME                                                     \
-  10000 // when a maximum of fan rotation rate is reached, hold much time (ms)
-        // to hold it before allowing to decrease the value
 
 #define REFRESH_RATE 250 // time to wait between each controller loop (ms)
 #define MAX_FAN_SET_INTERVAL                                                   \
@@ -114,14 +107,7 @@ int main(int argc, char *argv[]) {
     int temp = getLocalTemp();
     // dynamic fan speed is the computed instantaneous speed, whithout
     // hysteresis (FAN_PEAK_HOLD_TIME)
-    int dynamicFanSpeed = static_cast<int>(round(
-        (float)((float)(temp - FAN_OFF_TEMP) / (FAN_MAX_TEMP - FAN_OFF_TEMP) *
-                    (255 - FAN_START_VALUE) +
-                FAN_START_VALUE)));
-    if (dynamicFanSpeed < FAN_START_VALUE)
-      dynamicFanSpeed = 0;
-    if (dynamicFanSpeed > 255)
-      dynamicFanSpeed = 255;
+    int dynamicFanSpeed = calculateDynamicFanSpeed(temp);
 
     if (dynamicFanSpeed > slidingMaxFanSpeed ||
         time() > maxFanSpeedTime +
@@ -135,7 +121,7 @@ int main(int argc, char *argv[]) {
         lastTimeFanUpdate + MAX_FAN_SET_INTERVAL <
             time()) { // send value if it changed or if we didn't do it since
                       // more than "MAX_FAN_SET_INTERVAL" seconds.
-      setFanSpeed(max(FAN_MIN_VALUE, slidingMaxFanSpeed));
+      setFanSpeed(clampFanSpeed(slidingMaxFanSpeed));
       lastTimeFanUpdate = time();
 #ifdef VERBOSE
       cout << "T:" << temp << "°C | set fan to "

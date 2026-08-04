@@ -12,7 +12,7 @@ set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 set(SYSTEMD_UNIT_DIR "/etc/systemd/system" CACHE PATH
     "Installation directory for the systemd unit")
 
-add_executable(Tuxedo-Fan-Control Tuxedo-Fan-Control.cpp)
+add_executable(Tuxedo-Fan-Control Tuxedo-Fan-Control.cpp fan_curve.cpp)
 
 target_compile_features(Tuxedo-Fan-Control PRIVATE cxx_std_11)
 
@@ -28,3 +28,15 @@ install(FILES Tuxedo-Fan-Control.service
 
 include(CTest)
 enable_testing()
+
+if(BUILD_TESTING)
+  add_executable(Tuxedo-Fan-ControlTests
+      tests/fan_curve_test.cpp
+      fan_curve.cpp
+  )
+  target_include_directories(Tuxedo-Fan-ControlTests PRIVATE
+      ${CMAKE_CURRENT_SOURCE_DIR}
+  )
+  target_compile_features(Tuxedo-Fan-ControlTests PRIVATE cxx_std_11)
+  add_test(NAME fan_curve_boundaries COMMAND Tuxedo-Fan-ControlTests)
+endif()

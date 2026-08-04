@@ -27,10 +27,15 @@ For direct CMake usage:
 ```sh
 cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
 cmake --build build
+ctest --test-dir build --output-on-failure
 sudo cmake --install build --component runtime
 sudo cmake --install build --component service
 sudo systemctl enable Tuxedo-Fan-Control.service
 ```
+
+The CTest suite checks the temperature and fan-speed boundary values without
+accessing the laptop's EC. The tests must pass before an installation or
+release build.
 
 The CMake install step does not start or restart the service automatically.
 
