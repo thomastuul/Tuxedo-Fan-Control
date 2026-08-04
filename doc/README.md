@@ -20,6 +20,13 @@ Betrieb, den EC-Zugriff, die Kennlinie, die systemd-Unit und die erforderlichen
 Rechte. CMake installiert die Manpage nach
 `${CMAKE_INSTALL_PREFIX}/share/man/man8`.
 
+## Prüfcontainer
+
+Der Docker-Prüfcontainer liegt unter [`docker/quality`](../docker/quality).
+Das Skript [`scripts/container-quality.sh`](../scripts/container-quality.sh)
+führt `clang-format`, `clang-tidy`, CMake/CTest, Prettier und markdownlint
+aus. Die Prüfungen laufen ohne EC-Zugriffe und ohne Installation auf dem Host.
+
 ## Clevo-Service-Manual
 
 [`Clevo_N150ZU_N151ZU_N152ZU_Service_Manual.pdf`](Clevo_N150ZU_N151ZU_N152ZU_Service_Manual.pdf)

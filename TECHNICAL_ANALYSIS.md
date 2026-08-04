@@ -13,12 +13,12 @@ deshalb als `root` laufen.
 
 In `Tuxedo-Fan-Control.cpp` sind folgende EC-Schnittstellen definiert:
 
-| Funktion | Wert |
-| --- | ---: |
-| EC-Command-Port | `0x66` |
-| EC-Daten-Port | `0x62` |
+| Funktion         |   Wert |
+| ---------------- | -----: |
+| EC-Command-Port  | `0x66` |
+| EC-Daten-Port    | `0x62` |
 | Temperaturbefehl | `0x9E` |
-| Temperaturindex | `1` |
+| Temperaturindex  |    `1` |
 
 Die Funktion `GetLocalTemp()` arbeitet folgendermaßen:
 

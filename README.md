@@ -56,6 +56,23 @@ The CTest suite checks the temperature and fan-speed boundary values without
 accessing the laptop's EC. The tests must pass before an installation or
 release build.
 
+## Containerized quality checks
+
+The project provides a Debian-based Docker image containing the C++ and
+Markdown quality tools. Build the image and run all checks with:
+
+```sh
+docker build -t tuxedo-fan-control-quality:bookworm docker/quality
+docker run --rm --network none \
+  -v "$PWD:/workspace" \
+  -w /workspace \
+  tuxedo-fan-control-quality:bookworm
+```
+
+The container runs `clang-format`, `clang-tidy`, CMake/CTest, Prettier and
+markdownlint. It does not access the laptop EC and does not install the
+software on the host.
+
 The CMake install step does not start or restart the service automatically.
 
 The installation also provides the administrator manpage:
