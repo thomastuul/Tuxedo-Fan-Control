@@ -18,8 +18,26 @@ as root.
 sudo make all
 ```
 
-This builds `Tuxedo-Fan-Control`, installs it in `/usr/local/bin`, installs and
+The Makefile is a compatibility wrapper around CMake. It configures and builds
+the project, installs `Tuxedo-Fan-Control` in `/usr/local/bin`, installs and
 enables `Tuxedo-Fan-Control.service`, and starts the service.
+
+For direct CMake usage:
+
+```sh
+cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
+cmake --build build
+ctest --test-dir build --output-on-failure
+sudo cmake --install build --component runtime
+sudo cmake --install build --component service
+sudo systemctl enable Tuxedo-Fan-Control.service
+```
+
+The CTest suite checks the temperature and fan-speed boundary values without
+accessing the laptop's EC. The tests must pass before an installation or
+release build.
+
+The CMake install step does not start or restart the service automatically.
 
 Check the service with:
 

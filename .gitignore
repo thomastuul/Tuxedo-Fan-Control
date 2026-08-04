@@ -1,2 +1,5 @@
 N151ZU-fan-controller
+Tuxedo-Fan-Control
+build/
+compile_commands.json
 *.directory
