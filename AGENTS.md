@@ -21,6 +21,10 @@
   Container heraus nicht der normale Betriebsweg ist.
 - Für eine reine Build-Prüfung kann `make compile` verwendet werden. Die
   erzeugte Binärdatei ist ein Build-Artefakt und gehört nicht in das Repository.
+- Unit-Tests müssen erfolgreich ausgeführt werden, bevor ein Release-Artefakt
+  ausgeliefert, für die Auslieferung übersetzt oder installiert werden darf.
+  Die Tests müssen insbesondere die Boundary-Werte und ungültigen Werte aller
+  Schnittstellenargumente abdecken.
 - Vor Änderungen an der Installation mindestens eine Syntaxprüfung mit
   `g++ -fsyntax-only Tuxedo-Fan-Control.cpp` und eine Make-Dry-Run-Prüfung mit
   `make -n all` ausführen.
