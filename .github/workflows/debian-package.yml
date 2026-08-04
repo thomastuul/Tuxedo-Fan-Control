@@ -1,0 +1,77 @@
+name: Debian package
+
+on:
+  push:
+    branches:
+      - master
+    tags:
+      - "v*"
+  pull_request:
+    branches:
+      - master
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Debian package version (for example 0.1.0)
+        required: false
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  build-debian-package:
+    name: Build Debian package
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Determine package version
+        id: package-version
+        shell: bash
+        env:
+          INPUT_VERSION: ${{ inputs.version }}
+        run: |
+          package_version="$INPUT_VERSION"
+
+          if [[ -z "$package_version" && "$GITHUB_REF" == refs/tags/v* ]]; then
+            package_version="${GITHUB_REF_NAME#v}"
+          fi
+
+          if [[ -z "$package_version" ]]; then
+            package_version="0.0.0+git${GITHUB_SHA::12}.${GITHUB_RUN_NUMBER}"
+          fi
+
+          if [[ ! "$package_version" =~ ^[0-9][A-Za-z0-9.+~-]*$ ]]; then
+            echo "Invalid Debian package version: $package_version" >&2
+            exit 2
+          fi
+
+          echo "value=$package_version" >>"$GITHUB_OUTPUT"
+
+      - name: Build package container
+        run: docker build --tag tuxedo-fan-control-package docker/package
+
+      - name: Build and test Debian package
+        env:
+          PACKAGE_VERSION: ${{ steps.package-version.outputs.value }}
+        run: |
+          mkdir -p "$RUNNER_TEMP/debian-packages"
+          docker run --rm --network none \
+            --user "$(id -u):$(id -g)" \
+            --env PACKAGE_VERSION \
+            --volume "$GITHUB_WORKSPACE:/workspace:ro" \
+            --volume "$RUNNER_TEMP/debian-packages:/output" \
+            tuxedo-fan-control-package
+
+      - name: Upload Debian package
+        uses: actions/upload-artifact@v4
+        with:
+          name: tuxedo-fan-control-${{ steps.package-version.outputs.value }}
+          path: |
+            ${{ runner.temp }}/debian-packages/*.deb
+            ${{ runner.temp }}/debian-packages/*.sha256
+          if-no-files-found: error

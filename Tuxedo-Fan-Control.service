@@ -8,7 +8,7 @@ User=root
 Group=root
 UMask=007
  
-ExecStart=/usr/local/bin/Tuxedo-Fan-Control
+ExecStart=@CMAKE_INSTALL_FULL_BINDIR@/Tuxedo-Fan-Control
  
 Restart=on-failure
 Nice=-20

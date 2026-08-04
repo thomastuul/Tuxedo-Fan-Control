@@ -81,11 +81,14 @@
 
 ## Versionsverwaltung
 
-- Das Projekt besitzt derzeit keine automatische Versionsdatei und keine
-  automatische SemVer- oder Paketversionslogik.
-- Versionsnummern dürfen daher nicht eigenmächtig in einzelne Quell- oder
-  Dokumentationsdateien eingeführt werden. Eine spätere Versionierungslogik
-  muss zuerst als zusammenhängende Projektänderung dokumentiert werden.
+- Das Projekt besitzt keine separate Versionsdatei. Die Debian-Paketversion
+  wird zusammenhängend über die CMake-Variable
+  `TUXEDO_FAN_CONTROL_VERSION` gesetzt.
+- Die GitHub Action verwendet für Commit-Builds eine aus Commit und
+  Workflow-Lauf abgeleitete Entwicklungsversion. Tags mit dem Präfix `v` und
+  manuell gestartete Workflows liefern eine explizite Paketversion.
+- Versionsnummern dürfen nicht zusätzlich und unabhängig in einzelne Quell-
+  oder Dokumentationsdateien eingetragen werden.
 - Commits sollen den tatsächlichen Änderungsumfang knapp beschreiben.
 - Unabhängige oder fremde Arbeitsänderungen dürfen nicht stillschweigend in
   Commits aufgenommen werden.
