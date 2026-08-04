@@ -18,8 +18,21 @@ as root.
 sudo make all
 ```
 
-This builds `Tuxedo-Fan-Control`, installs it in `/usr/local/bin`, installs and
+The Makefile is a compatibility wrapper around CMake. It configures and builds
+the project, installs `Tuxedo-Fan-Control` in `/usr/local/bin`, installs and
 enables `Tuxedo-Fan-Control.service`, and starts the service.
+
+For direct CMake usage:
+
+```sh
+cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
+cmake --build build
+sudo cmake --install build --component runtime
+sudo cmake --install build --component service
+sudo systemctl enable Tuxedo-Fan-Control.service
+```
+
+The CMake install step does not start or restart the service automatically.
 
 Check the service with:
 
