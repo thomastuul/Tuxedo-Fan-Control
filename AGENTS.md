@@ -86,7 +86,9 @@
   `TUXEDO_FAN_CONTROL_VERSION` gesetzt.
 - Die GitHub Action verwendet für Commit-Builds eine aus Commit und
   Workflow-Lauf abgeleitete Entwicklungsversion. Tags mit dem Präfix `v` und
-  manuell gestartete Workflows liefern eine explizite Paketversion.
+  manuell gestartete Workflows liefern eine explizite Paketversion. Ein
+  `v`-Tag veröffentlicht das Debian-Paket und seine SHA-256-Prüfsumme
+  zusätzlich als GitHub-Release-Assets.
 - Versionsnummern dürfen nicht zusätzlich und unabhängig in einzelne Quell-
   oder Dokumentationsdateien eingetragen werden.
 - Commits sollen den tatsächlichen Änderungsumfang knapp beschreiben.
