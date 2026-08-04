@@ -4,6 +4,22 @@ Diese Dateien enthalten die wichtigsten öffentlich verfügbaren Unterlagen zur
 EC- und Temperaturhardware des Clevo N151ZU. Die Dateien wurden am 4. August
 2026 heruntergeladen.
 
+## Aktuelle Software-Kennlinie
+
+[`fan-curve.png`](fan-curve.png) zeigt die im Projekt implementierte TUXEDO-
+Kennlinie. Sie verwendet unter 44 °C 1 %, steigt anschließend gemäß der
+diskreten Tabelle an und erreicht ab 91 °C 100 %. Die Prozentwerte sind
+EC-Duty-Cycle-Werte und keine kalibrierten Umdrehungen pro Minute. Die
+vollständige Tabelle und die Implementierungsdetails stehen in
+[`TECHNICAL_ANALYSIS.md`](../TECHNICAL_ANALYSIS.md).
+
+## Manpage
+
+[`Tuxedo-Fan-Control.8`](Tuxedo-Fan-Control.8) beschreibt den daemon-only
+Betrieb, den EC-Zugriff, die Kennlinie, die systemd-Unit und die erforderlichen
+Rechte. CMake installiert die Manpage nach
+`${CMAKE_INSTALL_PREFIX}/share/man/man8`.
+
 ## Clevo-Service-Manual
 
 [`Clevo_N150ZU_N151ZU_N152ZU_Service_Manual.pdf`](Clevo_N150ZU_N151ZU_N152ZU_Service_Manual.pdf)

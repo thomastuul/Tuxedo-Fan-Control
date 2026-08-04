@@ -1,0 +1,65 @@
+.TH TUXEDO-FAN-CONTROL 8 "4 August 2026" "Tuxedo-Fan-Control" "System Manager's Manual"
+.SH NAME
+Tuxedo-Fan-Control \- EC-basierte Lüftersteuerung für Clevo-N151ZU-kompatible Laptops
+.SH SYNOPSIS
+.B Tuxedo-Fan-Control
+.SH DESCRIPTION
+.B Tuxedo-Fan-Control
+läuft als Hintergrunddienst und liest die Temperatur direkt aus dem Embedded
+Controller (EC). Abhängig von der gemessenen Temperatur wird ein
+Duty-Cycle-Wert an den EC-Lüfterkanal geschrieben.
+.PP
+Das Programm besitzt derzeit keine Kommandozeilenoptionen und ist für den
+Betrieb durch die systemd-Unit
+.BR Tuxedo-Fan-Control.service (8)
+vorgesehen.
+.SH FAN CURVE
+Unter 44 Grad Celsius wird 1 Prozent angefordert. Danach wird die diskrete
+TUXEDO-Kennlinie angewendet; ab 91 Grad Celsius werden 100 Prozent angefordert.
+Die Prozentwerte werden mit Rundung in den EC-Bereich 1 bis 255 umgerechnet.
+Die Kennlinie ist in der Projektdokumentation und als Grafik unter
+.I share/doc/Tuxedo-Fan-Control/fan-curve.png
+relativ zum Installationsprefix dokumentiert.
+.SH HARDWARE ACCESS
+Der Dienst verwendet privilegierte x86-I/O-Portzugriffe auf den EC:
+.IP \(bu 2
+Command-Port: 0x66
+.IP \(bu 2
+Data-Port: 0x62
+.IP \(bu 2
+Temperaturbefehl: 0x9E, Index 1
+.IP \(bu 2
+Lüfterbefehl: 0x99, Kanal 0x01
+.PP
+Die Befehle und Datenformate sind laptopspezifisch. Das Programm darf nicht
+auf nicht unterstützter Hardware betrieben werden.
+.SH SYSTEMD
+Die mitgelieferte Unit startet das Programm als Benutzer
+.BR root (8)
+mit hoher Priorität und startet es nach einem Fehler neu. Die Unit wird nach
+.I /etc/systemd/system/Tuxedo-Fan-Control.service
+installiert.
+.SH FILES
+.TP
+.I /usr/local/bin/Tuxedo-Fan-Control
+Ausführbares Programm bei der Standardinstallation.
+.TP
+.I /etc/systemd/system/Tuxedo-Fan-Control.service
+systemd-Unit.
+.TP
+.I share/man/man8/Tuxedo-Fan-Control.8
+Diese Manpage.
+.SH SEE ALSO
+.BR systemctl (1),
+.BR Tuxedo-Fan-Control.service (8)
+.PP
+.I TECHNICAL_ANALYSIS.md
+im Quellarchiv beschreibt EC-Zugriff, Temperaturmessung und Kennlinie.
+.SH AUTHOR
+Die Software basiert auf dem ursprünglichen
+.B Clevo-N151ZU-fan-controller
+von François Kneib:
+.br
+https://gitlab.com/francois.kneib/clevo-N151ZU-fan-controller
+.SH LICENSE
+GNU General Public License version 3 or any later version (GPL-3.0-or-later).

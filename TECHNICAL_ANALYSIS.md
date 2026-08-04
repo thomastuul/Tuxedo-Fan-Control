@@ -60,46 +60,41 @@ laptop- und firmwareabhängig.
 
 ## Temperatur- und Lüfterkurve
 
-Die relevanten Konstanten sind:
+Die Software verwendet die aus dem
+[offiziellen TUXEDO-Fan-Control-Projekt](https://github.com/tuxedocomputers/tuxedo-fan-control)
+übernommene Kennlinie. Sie besteht aus diskreten Einträgen je Grad Celsius.
+Unter `44 °C`
+werden `1 %`, ab `101 °C` werden `100 %` verwendet. Die Prozentwerte werden
+mit Rundung auf den EC-Bereich `1` bis `255` abgebildet.
 
-```cpp
-FAN_MIN_VALUE   = 40
-FAN_OFF_TEMP   = 70
-FAN_MAX_TEMP   = 90
-FAN_START_VALUE = 100
+Die Kennlinienlogik ist für CPU- und GPU-Werte identisch. Der aktuelle Daemon
+schreibt den Wert jedoch ausschließlich für EC-Kanal `0x01`; die Kurvenlogik
+ist damit vorbereitet, aber derzeit nicht auf weitere Kanäle verdrahtet.
+
+Die Darstellung der aktuell implementierten Kennlinie befindet sich in
+[`doc/fan-curve.png`](doc/fan-curve.png).
+
+```text
+44–46 °C: 10 %     47–49 °C: 12 %     50–52 °C: 15 %
+53–55 °C: 17 %     56–58 °C: 19 %     59 °C: 22 %
+60 °C: 23 %         61 °C: 24 %         62 °C: 25 %
+63 °C: 27 %         64 °C: 29 %         65–66 °C: 35 %
+67–68 °C: 37 %      69–70 °C: 42 %      71–73 °C: 45 %
+74–75 °C: 50 %      76–77 °C: 55 %      78–79 °C: 60 %
+80–81 °C: 70 %      82 °C: 75 %         83–84 °C: 80 %
+85–87 °C: 85 %      88–90 °C: 90 %      91–100 °C: 100 %
 ```
 
-Die Regelung berechnet die Lüftergeschwindigkeit linear:
+Die frühere lineare Kennlinie mit den Schwellen `70 °C` und `90 °C` wird nicht
+mehr verwendet. Die Regelung folgt dem Tabellenwert unmittelbar; ein
+zehnsekündiges Halten eines zuvor erreichten Spitzenwerts findet nicht mehr
+statt.
 
-- unter `70 °C`: dynamischer Wert `0`
-- bei `70 °C`: Startwert `100`
-- zwischen `70 °C` und `90 °C`: lineare Steigerung
-- ab `90 °C`: maximaler Wert `255`
+## Regelzyklus
 
-Anschließend wird jedoch immer mindestens `FAN_MIN_VALUE` geschrieben:
-
-```cpp
-setFanSpeed(max(FAN_MIN_VALUE, slidingMaxFanSpeed));
-```
-
-Der Lüfter wird bei niedriger Temperatur deshalb nicht zwingend vollständig
-abgeschaltet, sondern mindestens mit EC-Wert `40` angesteuert. Der Kommentar,
-dass der Lüfter unter `70 °C` aus sei, beschreibt das tatsächliche Verhalten
-nicht vollständig.
-
-## Regelzyklus und Spitzenwert-Haltezeit
-
-Die Regelung läuft alle 250 ms. Ein höherer erforderlicher Lüfterwert wird
-sofort übernommen. Nach einer Erhöhung bleibt der erkannte Spitzenwert jedoch
-mindestens zehn Sekunden erhalten:
-
-```cpp
-FAN_PEAK_HOLD_TIME = 10000; // Millisekunden
-```
-
-Damit soll verhindert werden, dass der Lüfter bei kurzen
-Temperaturschwankungen ständig hoch- und herunterregelt. Zusätzlich wird der
-aktuelle Wert spätestens alle zwei Sekunden erneut an den EC gesendet.
+Die Regelung liest die Temperatur alle 250 ms und folgt dem zugehörigen
+Tabellenwert unmittelbar. Der aktuelle EC-Wert wird bei einer Änderung sowie
+spätestens alle zwei Sekunden erneut an den EC gesendet.
 
 ## Berechtigungen und Betriebsrisiken
 

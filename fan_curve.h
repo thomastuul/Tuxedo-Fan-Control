@@ -1,10 +1,11 @@
 #pragma once
 
-constexpr int FAN_MIN_VALUE = 40;
-constexpr int FAN_OFF_TEMP = 70;
-constexpr int FAN_MAX_TEMP = 90;
-constexpr int FAN_START_VALUE = 100;
-constexpr int FAN_PEAK_HOLD_TIME = 10000;
+constexpr int FAN_MIN_VALUE = 1;
+constexpr int FAN_TABLE_MIN_TEMP = 44;
+constexpr int FAN_TABLE_MAX_TEMP = 100;
+constexpr int FAN_DEFAULT_DUTY_PERCENT = 1;
+constexpr int FAN_MAX_DUTY_PERCENT = 100;
+constexpr int FAN_MAX_SPEED = 255;
 
 int calculateDynamicFanSpeed(int temperature);
 int clampFanSpeed(int speed);
