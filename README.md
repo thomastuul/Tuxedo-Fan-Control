@@ -40,6 +40,8 @@ The Makefile is a compatibility wrapper around CMake. It configures and builds
 the project, installs `Tuxedo-Fan-Control` in `/usr/local/bin`, installs and
 enables `Tuxedo-Fan-Control.service`, and starts the service. The final command
 is a system installation and must only be run after the tests have passed.
+CMake generates the unit with an `ExecStart` path matching the selected
+installation prefix.
 
 For direct CMake usage:
 
@@ -72,6 +74,36 @@ docker run --rm --network none \
 The container runs `clang-format`, `clang-tidy`, CMake/CTest, Prettier and
 markdownlint. It does not access the laptop EC and does not install the
 software on the host.
+
+## Debian package
+
+The Debian package is built in a dedicated Debian Bookworm container. Unit
+tests run inside the container before CPack is allowed to create the package.
+For a local package build, use:
+
+```sh
+docker build -t tuxedo-fan-control-package docker/package
+mkdir -p package-output
+docker run --rm --network none \
+  --user "$(id -u):$(id -g)" \
+  -e PACKAGE_VERSION=0.1.0 \
+  -v "$PWD:/workspace:ro" \
+  -v "$PWD/package-output:/output" \
+  tuxedo-fan-control-package
+```
+
+The generated `.deb` file and its SHA-256 checksum are written to
+`package-output/`. The package installs the executable below `/usr/bin`, the
+systemd unit below `/usr/lib/systemd/system`, the administrator manpage and
+the project documentation. Installing the package does not automatically
+enable or start the hardware-specific service.
+
+The GitHub Actions workflow `Debian package` performs the same containerized
+build for pull requests and pushes to `master`, for tags beginning with `v`,
+and when started manually. Commit builds receive a version of the form
+`0.0.0+git<commit>.<run>`. A tag such as `v0.1.0` produces package version
+`0.1.0`; a manual run can supply its own Debian-compatible version. Every
+workflow run publishes the package and checksum as downloadable artifacts.
 
 The CMake install step does not start or restart the service automatically.
 

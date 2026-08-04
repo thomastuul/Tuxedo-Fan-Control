@@ -37,15 +37,23 @@ auf nicht unterstützter Hardware betrieben werden.
 Die mitgelieferte Unit startet das Programm als Benutzer
 .BR root (8)
 mit hoher Priorität und startet es nach einem Fehler neu. Die Unit wird nach
-.I /etc/systemd/system/Tuxedo-Fan-Control.service
-installiert.
+.I /usr/lib/systemd/system/Tuxedo-Fan-Control.service
+installiert, wenn das Debian-Paket verwendet wird. Eine direkte lokale
+CMake-Installation verwendet standardmäßig
+.IR /etc/systemd/system/Tuxedo-Fan-Control.service .
 .SH FILES
 .TP
+.I /usr/bin/Tuxedo-Fan-Control
+Ausführbares Programm aus dem Debian-Paket.
+.TP
+.I /usr/lib/systemd/system/Tuxedo-Fan-Control.service
+systemd-Unit aus dem Debian-Paket.
+.TP
 .I /usr/local/bin/Tuxedo-Fan-Control
-Ausführbares Programm bei der Standardinstallation.
+Ausführbares Programm bei einer direkten lokalen Standardinstallation.
 .TP
 .I /etc/systemd/system/Tuxedo-Fan-Control.service
-systemd-Unit.
+systemd-Unit bei einer direkten lokalen Standardinstallation.
 .TP
 .I share/man/man8/Tuxedo-Fan-Control.8
 Diese Manpage.

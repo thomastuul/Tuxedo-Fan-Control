@@ -2,5 +2,6 @@ N151ZU-fan-controller
 Tuxedo-Fan-Control
 build/
 build-container/
+package-output/
 compile_commands.json
 *.directory

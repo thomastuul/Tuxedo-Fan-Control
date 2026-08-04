@@ -27,6 +27,13 @@ Das Skript [`scripts/container-quality.sh`](../scripts/container-quality.sh)
 führt `clang-format`, `clang-tidy`, CMake/CTest, Prettier und markdownlint
 aus. Die Prüfungen laufen ohne EC-Zugriffe und ohne Installation auf dem Host.
 
+Der Paketcontainer unter [`docker/package`](../docker/package) erzeugt mit
+CPack ein Debian-Paket. Das Skript
+[`scripts/container-package.sh`](../scripts/container-package.sh) führt vor
+dem Paketbau zwingend die Unit-Tests aus und erzeugt zusätzlich eine
+SHA-256-Prüfsumme. Derselbe Ablauf wird von der GitHub Action `Debian package`
+verwendet.
+
 ## Clevo-Service-Manual
 
 [`Clevo_N150ZU_N151ZU_N152ZU_Service_Manual.pdf`](Clevo_N150ZU_N151ZU_N152ZU_Service_Manual.pdf)
