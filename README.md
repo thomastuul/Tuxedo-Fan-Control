@@ -104,6 +104,8 @@ and when started manually. Commit builds receive a version of the form
 `0.0.0+git<commit>.<run>`. A tag such as `v0.1.0` produces package version
 `0.1.0`; a manual run can supply its own Debian-compatible version. Every
 workflow run publishes the package and checksum as downloadable artifacts.
+Tag builds additionally create a GitHub Release and attach the `.deb` package
+and its SHA-256 checksum as permanent release assets.
 
 The CMake install step does not start or restart the service automatically.
 
