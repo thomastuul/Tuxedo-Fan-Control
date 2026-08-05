@@ -3,7 +3,7 @@
 set -eu
 
 BUILD_DIR=/tmp/tuxedo-fan-control-quality-build
-MARKDOWN_FILES="AGENTS.md README.md TECHNICAL_ANALYSIS.md doc/README.md"
+MARKDOWN_FILES="AGENTS.md README.md QUICK-SETUP.md TECHNICAL_ANALYSIS.md doc/README.md"
 
 rm -rf "$BUILD_DIR"
 
