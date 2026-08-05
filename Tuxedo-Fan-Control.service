@@ -8,7 +8,9 @@ User=root
 Group=root
 UMask=007
  
-ExecStart=@CMAKE_INSTALL_FULL_BINDIR@/Tuxedo-Fan-Control
+Environment=TUXEDO_FAN_PROFILE=balanced
+EnvironmentFile=-/etc/default/tuxedo-fan-control
+ExecStart=@CMAKE_INSTALL_FULL_BINDIR@/Tuxedo-Fan-Control --profile ${TUXEDO_FAN_PROFILE}
  
 Restart=on-failure
 Nice=-20

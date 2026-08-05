@@ -4,13 +4,11 @@ Diese Dateien enthalten die wichtigsten öffentlich verfügbaren Unterlagen zur
 EC- und Temperaturhardware des Clevo N151ZU. Die Dateien wurden am 4. August
 2026 heruntergeladen.
 
-## Aktuelle Software-Kennlinie
+## Software-Kennlinien
 
-[`fan-curve.png`](fan-curve.png) zeigt die im Projekt implementierte TUXEDO-
-Kennlinie. Sie verwendet unter 44 °C 1 %, steigt anschließend gemäß der
-diskreten Tabelle an und erreicht ab 91 °C 100 %. Die Prozentwerte sind
-EC-Duty-Cycle-Werte und keine kalibrierten Umdrehungen pro Minute. Die
-vollständige Tabelle und die Implementierungsdetails stehen in
+[`fan-curve.png`](fan-curve.png) vergleicht die früher im Projekt verwendete
+Einzelkennlinie mit den fünf aktuellen CPU-Profilkurven. Deren vollständige
+Tabellen und die Implementierungsdetails stehen in
 [`TECHNICAL_ANALYSIS.md`](../TECHNICAL_ANALYSIS.md).
 
 ## Manpage

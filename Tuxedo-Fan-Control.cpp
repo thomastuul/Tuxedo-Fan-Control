@@ -83,7 +83,10 @@ static std::uint64_t nowMilliseconds() {
   return static_cast<std::uint64_t>(MILLISECONDS.count());
 }
 
-int main() {
+int main(int argc, const char *argv[]) {
+  const FanProfile PROFILE = fanProfileFromCommandLine(argc, argv);
+  std::clog << "Using fan profile: " << fanProfileName(PROFILE) << '\n';
+
   if (!ecInit()) {
     std::cerr << "Unable to access the embedded controller I/O ports\n";
     return EXIT_FAILURE;
@@ -95,7 +98,7 @@ int main() {
   for (;;) {
     const std::uint64_t NOW = nowMilliseconds();
     int temp = getLocalTemp();
-    int dynamicFanSpeed = calculateDynamicFanSpeed(temp);
+    int dynamicFanSpeed = calculateDynamicFanSpeed(temp, PROFILE);
 
     if (lastFanSpeed != dynamicFanSpeed ||
         NOW > lastTimeFanUpdate + MAX_FAN_SET_INTERVAL_MS) {

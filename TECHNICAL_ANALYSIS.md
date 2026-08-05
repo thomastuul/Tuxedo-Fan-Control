@@ -53,42 +53,149 @@ Der Geschwindigkeitswert wird als Byte an den EC geschrieben:
 
 - `0`: theoretisch aus
 - `255`: maximale Geschwindigkeit
-- `40`: im Programm definierter Mindestwert
+- `0`: kleinster vom Programm verwendeter Wert; Profile dürfen den Lüfter damit
+  unterhalb ihrer ersten aktiven Stufe abschalten
 
 Die genaue Bedeutung der EC-Befehle `0x99` und `0x9E` ist
 laptop- und firmwareabhängig.
 
-## Temperatur- und Lüfterkurve
+## TUXEDO-Control-Center-Referenzkurven
 
-Die Software verwendet die aus dem
-[offiziellen TUXEDO-Fan-Control-Projekt](https://github.com/tuxedocomputers/tuxedo-fan-control)
-übernommene Kennlinie. Sie besteht aus diskreten Einträgen je Grad Celsius.
-Unter `44 °C`
-werden `1 %`, ab `101 °C` werden `100 %` verwendet. Die Prozentwerte werden
-mit Rundung auf den EC-Bereich `1` bis `255` abgebildet.
+Das TUXEDO Control Center (TCC) definiert fünf Standardprofile mit getrennten
+CPU- und GPU-Kurven. Die folgenden Werte stammen aus
+[`TccFanTable.ts`](https://github.com/tuxedocomputers/tuxedo-control-center/blob/ae003220232ea4f4591789fdb3167065c682bc08/src/common/models/TccFanTable.ts)
+des TCC-Commits `ae003220` vom 28. Juli 2026. Die Quelldatei enthält für jedes
+ganze Grad von `0 °C` bis `100 °C` einen Sollwert. Zur kompakteren Darstellung
+sind hier nur Temperaturen aufgeführt, an denen sich der Wert ändert.
 
-Die Kennlinienlogik ist für CPU- und GPU-Werte identisch. Der aktuelle Daemon
-schreibt den Wert jedoch ausschließlich für EC-Kanal `0x01`; die Kurvenlogik
-ist damit vorbereitet, aber derzeit nicht auf weitere Kanäle verdrahtet.
+Die Prozentwerte sind normalisierte TCC-Sollwerte und keine kalibrierten
+Drehzahlen in Umdrehungen pro Minute. Die tatsächliche Drehzahl hängt von
+Laptopmodell, EC, Firmware und Lüfter ab. Diese Referenztabellen ersetzen die
+zuvor dokumentierte ältere Einzelkurve und werden von der C++-Implementierung
+als auswählbare Profile verwendet. Da der Daemon nur den oben beschriebenen
+einzelnen lokalen EC-Temperaturwert liest, wird jeweils die CPU-Kurve
+angewendet. Die GPU-Kurven bleiben als Referenz für eine spätere Erweiterung um
+eine verlässlich identifizierte GPU-Temperatur.
 
-Die Darstellung der aktuell implementierten Kennlinie befindet sich in
-[`doc/fan-curve.png`](doc/fan-curve.png).
+### Silent
 
 ```text
-44–46 °C: 10 %     47–49 °C: 12 %     50–52 °C: 15 %
-53–55 °C: 17 %     56–58 °C: 19 %     59 °C: 22 %
-60 °C: 23 %         61 °C: 24 %         62 °C: 25 %
-63 °C: 27 %         64 °C: 29 %         65–66 °C: 35 %
-67–68 °C: 37 %      69–70 °C: 42 %      71–73 °C: 45 %
-74–75 °C: 50 %      76–77 °C: 55 %      78–79 °C: 60 %
-80–81 °C: 70 %      82 °C: 75 %         83–84 °C: 80 %
-85–87 °C: 85 %      88–90 °C: 90 %      91–100 °C: 100 %
+CPU:  0 °C=0 %  61=20 %  66=25 %  70=30 %  72=35 %  74=40 %
+     76=45 %    78=50 %  80=55 %  82=60 %  84=65 %  86=70 %
+     88=75 %    89=80 %  90=85 %  91=90 %  93=95 %  95=100 %
+GPU:  0 °C=0 %  60=20 %  62=22 %  64=23 %  65=24 %  66=25 %
+     68=28 %    69=30 %  70=33 %  71=37 %  72=40 %  73=43 %
+     74=44 %    75=46 %  76=48 %  77=52 %  79=55 %  81=60 %
+     83=65 %    85=70 %  87=80 %  89=90 %  91=100 %
 ```
 
-Die frühere lineare Kennlinie mit den Schwellen `70 °C` und `90 °C` wird nicht
-mehr verwendet. Die Regelung folgt dem Tabellenwert unmittelbar; ein
-zehnsekündiges Halten eines zuvor erreichten Spitzenwerts findet nicht mehr
-statt.
+### Quiet
+
+```text
+CPU:  0 °C=0 %  51=20 %  61=22 %  64=23 %  65=24 %  66=25 %
+     68=28 %    69=30 %  70=33 %  71=37 %  72=40 %  73=43 %
+     74=44 %    75=46 %  76=48 %  77=52 %  79=55 %  81=60 %
+     83=65 %    85=70 %  87=80 %  89=85 %  91=90 %  93=95 %
+     95=100 %
+GPU:  0 °C=0 %  51=20 %  61=25 %  65=30 %  69=35 %  72=40 %
+     73=43 %    74=44 %  75=46 %  76=48 %  77=52 %  79=55 %
+     81=60 %    83=65 %  85=70 %  87=80 %  89=90 %  91=100 %
+```
+
+### Balanced
+
+```text
+CPU:  0 °C=0 %  46=20 %  52=23 %  54=26 %  57=30 %  60=33 %
+     63=35 %    65=38 %  66=40 %  67=42 %  68=45 %  69=47 %
+     70=50 %    72=52 %  73=53 %  75=57 %  77=60 %  79=63 %
+     80=65 %    82=70 %  84=75 %  86=80 %  88=85 %  89=90 %
+     92=95 %    95=100 %
+GPU:  0 °C=0 %  46=20 %  52=23 %  54=26 %  57=30 %  60=33 %
+     63=35 %    65=38 %  66=40 %  67=42 %  68=45 %  69=47 %
+     70=50 %    72=52 %  73=53 %  75=57 %  77=60 %  79=63 %
+     80=65 %    82=70 %  84=75 %  86=80 %  88=85 %  89=90 %
+     91=100 %
+```
+
+### Cool
+
+```text
+CPU:  0 °C=0 %  40=20 %  46=25 %  51=30 %  56=32 %  57=33 %
+     58=34 %    59=35 %  61=37 %  62=40 %  64=42 %  65=45 %
+     68=47 %    69=50 %  71=52 %  72=55 %  74=57 %  75=60 %
+     77=65 %    79=70 %  81=75 %  83=80 %  85=85 %  87=90 %
+     90=95 %    95=100 %
+GPU:  0 °C=0 %  40=25 %  45=30 %  50=35 %  55=40 %  60=45 %
+     65=50 %    70=60 %  75=70 %  80=75 %  85=85 %  87=90 %
+     89=95 %    91=100 %
+```
+
+### Freezy
+
+```text
+CPU:  0 °C=20 %  30=25 %  40=30 %  46=35 %  50=40 %  56=45 %
+     61=50 %     66=55 %  71=60 %  76=65 %  78=70 %  80=75 %
+     82=80 %     84=85 %  86=90 %  90=95 %  95=100 %
+GPU:  0 °C=25 %  36=30 %  41=35 %  46=40 %  51=45 %  56=50 %
+     61=60 %     66=65 %  71=70 %  76=75 %  81=85 %  86=95 %
+     91=100 %
+```
+
+### Regelungsverhalten des TCC
+
+Der TCC-Lüfter-Worker läuft im Abstand von einer Sekunde. Die Regelung filtert
+bis zu 13 Temperaturmessungen, indem sie die Werte sortiert und den gerundeten
+Mittelwert aus bis zu sieben mittleren Werten bildet. Auf den Tabellenwert
+werden anschließend Benutzer-Offset, konfiguriertes Minimum und Maximum sowie
+die Mindestgeschwindigkeit der Hardware angewendet. Beim Absenken oberhalb von
+20 % verringert TCC den Sollwert um höchstens zwei Prozentpunkte pro Zyklus.
+Zusätzlich erzwingt TCC ab `80 °C` mindestens `30 %` und ab `90 °C` mindestens
+`40 %`. Die Berechnung ist in
+[`FanControlLogic.ts`](https://github.com/tuxedocomputers/tuxedo-control-center/blob/ae003220232ea4f4591789fdb3167065c682bc08/src/service-app/classes/FanControlLogic.ts#L210-L307)
+dokumentiert.
+
+Für die aktuelle `hwmon`-Schnittstelle rechnet TCC den Sollwert auf den
+Linux-PWM-Bereich um:
+
+```text
+PWM = round(Prozent / 100 × 255)
+```
+
+| Sollwert | sysfs-PWM |
+| -------: | --------: |
+|      0 % |         0 |
+|     20 % |        51 |
+|     25 % |        64 |
+|     30 % |        77 |
+|     40 % |       102 |
+|     50 % |       128 |
+|     60 % |       153 |
+|     75 % |       191 |
+|     90 % |       230 |
+|    100 % |       255 |
+
+Der jeweilige Kernel-Treiber übersetzt diesen Wert weiter in das
+hardwareabhängige EC-Format. Deshalb lässt sich daraus ohne Messreihe keine
+allgemeingültige Prozent-zu-RPM-Kennlinie ableiten. Der EC-Befehl `0x99` dieses
+Projekts erwartet ebenfalls ein Byte von `0` bis `255`; ob dessen Skalierung
+mit der aktuellen TCC-`hwmon`-Skala identisch ist, muss jedoch für das konkrete
+Laptopmodell und dessen Firmware verifiziert werden.
+
+### Profilauswahl und thermische Auswirkungen
+
+Das Profil wird mit `--profile silent|quiet|balanced|cool|freezy` ausgewählt.
+Ohne gültigen Wert wird `balanced` verwendet. Die systemd-Unit setzt diesen
+Standard und liest optional `/etc/default/tuxedo-fan-control`; dort kann
+beispielsweise `TUXEDO_FAN_PROFILE=quiet` gesetzt werden.
+
+`silent` und `quiet` lassen den Lüfter bei niedrigeren Temperaturen aus und
+fordern bei gleicher Temperatur meist weniger Lüfterleistung an. `cool` und
+insbesondere `freezy` beginnen früher beziehungsweise mit höherer Leistung und
+können dadurch die Bauteiltemperaturen auf Kosten von Geräusch und Verschleiß
+senken. Alle Profile erreichen laut Referenztabelle spätestens bei `95 °C`
+100 %. Die tatsächliche thermische Wirkung bleibt vom konkreten EC, der
+Firmware, dem Kühlsystem und der Bedeutung des gelesenen Temperatursensors
+abhängig.
 
 ## Regelzyklus
 

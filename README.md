@@ -1,22 +1,36 @@
 # Tuxedo-Fan-Control
 
 Automatic fan control for compatible Tuxedo/Clevo laptops. The controller reads
-the embedded-controller temperature and applies the discrete TUXEDO fan curve
+the embedded-controller temperature and applies a selectable TUXEDO fan profile
 to the EC fan-control channel.
 
-## Fan curve
+## Fan profiles
 
-The current implementation uses the original TUXEDO table: below 44 °C it
-requests 1 %, then increases the duty cycle in discrete one-degree steps until
-100 % at 91 °C. The percentage is converted to the EC range 1–255 with
-rounding. The curve is applied immediately; the daemon does not use the
-former linear 70/90 °C curve or a peak-value hold time.
+The daemon provides the TUXEDO Control Center profiles `silent`, `quiet`,
+`balanced`, `cool`, and `freezy`. Because the EC interface currently supplies
+one local temperature only, the implementation uses the documented CPU curve
+for each profile. `balanced` is the default.
 
-![Current TUXEDO fan curve](doc/fan-curve.png)
+![Legacy fan curve and current TCC CPU profiles](doc/fan-curve.png)
 
-The graph shows the requested duty cycle, not a calibrated physical fan speed
-in revolutions per minute. The complete table and the EC conversion are
-documented in [TECHNICAL_ANALYSIS.md](TECHNICAL_ANALYSIS.md).
+The profile can be passed directly:
+
+```sh
+Tuxedo-Fan-Control --profile quiet
+```
+
+The systemd unit reads `/etc/default/tuxedo-fan-control`. To select a profile,
+create that file with, for example:
+
+```sh
+TUXEDO_FAN_PROFILE=quiet
+```
+
+If the file is absent or its value is invalid, the daemon uses `balanced`.
+Changing the active profile requires an intentional service restart. The
+percentage is converted with rounding to the EC range 0–255. The complete
+tables, their thermal implications, and the EC conversion are documented in
+[TECHNICAL_ANALYSIS.md](TECHNICAL_ANALYSIS.md).
 
 ## Prerequisites
 
