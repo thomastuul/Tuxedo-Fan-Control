@@ -24,8 +24,12 @@ add_library(fan_curve_logic STATIC fan_curve.cpp)
 target_include_directories(fan_curve_logic PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 target_compile_features(fan_curve_logic PUBLIC cxx_std_11)
 
+add_library(ec_controller_logic STATIC ec_controller.cpp)
+target_include_directories(ec_controller_logic PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
+target_compile_features(ec_controller_logic PUBLIC cxx_std_11)
+
 add_executable(Tuxedo-Fan-Control Tuxedo-Fan-Control.cpp)
-target_link_libraries(Tuxedo-Fan-Control PRIVATE fan_curve_logic)
+target_link_libraries(Tuxedo-Fan-Control PRIVATE fan_curve_logic ec_controller_logic)
 
 target_compile_features(Tuxedo-Fan-Control PRIVATE cxx_std_11)
 
@@ -65,10 +69,14 @@ enable_testing()
 
 if(BUILD_TESTING)
   add_executable(Tuxedo-Fan-ControlTests
+      tests/ec_controller_test.cpp
       tests/fan_curve_test.cpp
   )
-  target_link_libraries(Tuxedo-Fan-ControlTests PRIVATE fan_curve_logic)
-  add_test(NAME fan_curve_boundaries COMMAND Tuxedo-Fan-ControlTests)
+  target_link_libraries(Tuxedo-Fan-ControlTests PRIVATE
+      ec_controller_logic
+      fan_curve_logic
+  )
+  add_test(NAME unit_tests COMMAND Tuxedo-Fan-ControlTests)
 endif()
 
 set(CPACK_PACKAGE_NAME "tuxedo-fan-control")

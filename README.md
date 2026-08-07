@@ -41,6 +41,13 @@ sudo apt install -y g++ make
 The program accesses the embedded-controller I/O ports and therefore must run
 as root.
 
+EC buffer waits are bounded and transaction failures are reported explicitly.
+The daemon skips fan control when a temperature read fails and exits with an
+error after three consecutive failed control cycles. The supplied systemd unit
+then applies its `Restart=on-failure` policy. Because the available hardware
+documentation does not guarantee a model-independent emergency EC command, the
+daemon does not issue a speculative recovery write before exiting.
+
 ## Build and install
 
 ```sh
@@ -68,9 +75,10 @@ sudo cmake --install build --component service
 sudo systemctl enable Tuxedo-Fan-Control.service
 ```
 
-The CTest suite checks the temperature and fan-speed boundary values without
-accessing the laptop's EC. The tests must pass before an installation or
-release build.
+The CTest suite checks the temperature and fan-speed boundary values as well as
+EC timeout, transaction-error propagation, valid zero-byte handling, and the
+consecutive-failure policy without accessing the laptop's EC. The tests must
+pass before an installation or release build.
 
 ## Containerized quality checks
 

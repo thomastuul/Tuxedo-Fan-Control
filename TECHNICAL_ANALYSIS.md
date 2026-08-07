@@ -20,7 +20,7 @@ In `Tuxedo-Fan-Control.cpp` sind folgende EC-Schnittstellen definiert:
 | Temperaturbefehl | `0x9E` |
 | Temperaturindex  |    `1` |
 
-Die Funktion `GetLocalTemp()` arbeitet folgendermaßen:
+Die Funktion `getLocalTemp()` arbeitet folgendermaßen:
 
 1. Mit `ioperm()` werden die beiden I/O-Ports für den Prozess freigeschaltet.
 2. Der EC-Eingangspuffer wird geleert.
@@ -28,6 +28,14 @@ Die Funktion `GetLocalTemp()` arbeitet folgendermaßen:
 4. Der Index `1` wird an den Daten-Port geschrieben.
 5. Das Programm wartet auf ein verfügbares Datenbyte.
 6. Ein Byte wird vom Daten-Port gelesen und zurückgegeben.
+
+Alle Wartevorgänge beim Leeren des Ausgabepuffers, beim Warten auf einen freien
+Eingabepuffer und beim Warten auf ein Ausgabebyte sind auf eine feste Zahl von
+Portabfragen begrenzt. Jeder Teilschritt liefert einen expliziten Status. Ein
+Timeout beendet die laufende Transaktion; insbesondere wird nach einem Timeout
+kein nachfolgendes Command- oder Datenbyte geschrieben. Das gelesene Byte wird
+getrennt vom Status zurückgegeben, sodass der gültige EC-Wert `0` nicht mit
+einem Timeout verwechselt wird.
 
 Der gelesene Wert wird unmittelbar als Temperatur in Grad Celsius verwendet.
 Der Code geht also davon aus, dass der EC bei Befehl `0x9E` und Index `1` einen
@@ -203,14 +211,32 @@ Die Regelung liest die Temperatur alle 250 ms und folgt dem zugehörigen
 Tabellenwert unmittelbar. Der aktuelle EC-Wert wird bei einer Änderung sowie
 spätestens alle zwei Sekunden erneut an den EC gesendet.
 
+Schlägt eine Temperaturtransaktion fehl, wird aus dem ungültigen Messwert kein
+Lüftersollwert berechnet und in diesem Zyklus kein Lüfterbefehl gesendet. Ein
+fehlgeschlagener Lüfterbefehl wird ebenfalls als Fehler des Regelzyklus
+behandelt. Nach einem vollständig erfolgreichen Zyklus wird der Fehlerzähler
+zurückgesetzt. Nach drei aufeinanderfolgenden fehlgeschlagenen Zyklen beendet
+sich der Daemon mit einem Fehler und einer Diagnose. Die systemd-Unit startet
+ihn wegen `Restart=on-failure` anschließend entsprechend der systemd-Richtlinie
+neu.
+
+Der Code versucht vor dem Beenden nicht, eine vermeintliche Notfall-
+Lüfterstufe zu setzen. Zwar ist `255` der höchste von den Profilen verwendete
+Sollwert, aber die vorliegenden Unterlagen garantieren nicht modell- und
+firmwareübergreifend, dass eine weitere, möglicherweise ebenfalls nur teilweise
+übertragene `0x99`-Transaktion nach einem Kommunikationsfehler einen sicheren
+Hardwarezustand herstellt. Die weitere Schutzwirkung der Firmware und der
+Hardware bleibt daher erforderlich.
+
 ## Berechtigungen und Betriebsrisiken
 
 Der systemd-Dienst läuft als `root`, weil `ioperm()`, `inb()` und `outb()` für
 direkte I/O-Portzugriffe privilegierte Rechte benötigen.
 
-Die EC-Funktionen prüfen ihre Rückgabewerte nur unvollständig. Außerdem gibt es
-keine modellunabhängige Validierung des gelesenen Temperaturwerts und keinen
-separaten Notfallmechanismus in der Software. Die Regelung ist daher von der
-EC-Implementierung und Firmware des jeweiligen Laptops abhängig. Eine falsche
-Port- oder Befehlsbelegung kann zu fehlerhaften Temperaturwerten oder einer
-ungeeigneten Lüfteransteuerung führen.
+Die EC-Funktionen begrenzen ihre Wartevorgänge und propagieren
+Kommunikationsfehler bis in die Regelschleife. Es gibt weiterhin keine
+modellunabhängige Validierung eines erfolgreich gelesenen Temperaturbytes und
+keinen dokumentierten separaten Notfallbefehl in der Software. Die Regelung ist
+daher von der EC-Implementierung und Firmware des jeweiligen Laptops abhängig.
+Eine falsche Port- oder Befehlsbelegung kann zu plausibel erscheinenden, aber
+fehlerhaften Temperaturwerten oder einer ungeeigneten Lüfteransteuerung führen.
