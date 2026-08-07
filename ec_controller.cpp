@@ -1,5 +1,7 @@
 #include "ec_controller.h"
 
+#include <utility>
+
 namespace {
 
 constexpr std::uint8_t OUTPUT_BUFFER_FULL = 0x01;
@@ -26,27 +28,31 @@ const char *ecStatusMessage(EcStatus status) {
   return "unknown EC error";
 }
 
-EcController::EcController(EcPortIo &portIo, unsigned waitAttempts)
-    : portIo(portIo), waitAttempts(waitAttempts) {
+EcController::EcController(EcPortIo &portIo,
+                           Clock::duration waitTimeout,
+                           NowFunction nowFunction)
+    : portIo(portIo), waitTimeout(waitTimeout), now(std::move(nowFunction)) {
 }
 
 EcStatus EcController::flush() {
-  for (unsigned attempt = 0; attempt < waitAttempts; ++attempt) {
+  const Clock::time_point DEADLINE = now() + waitTimeout;
+  do {
     if ((portIo.readPort(EC_COMMAND_PORT) & OUTPUT_BUFFER_FULL) == 0) {
       return EcStatus::Success;
     }
     portIo.readPort(EC_DATA_PORT);
-  }
+  } while (now() < DEADLINE);
 
   return EcStatus::FlushTimeout;
 }
 
 EcStatus EcController::waitForInputBuffer() {
-  for (unsigned attempt = 0; attempt < waitAttempts; ++attempt) {
+  const Clock::time_point DEADLINE = now() + waitTimeout;
+  do {
     if ((portIo.readPort(EC_COMMAND_PORT) & INPUT_BUFFER_FULL) == 0) {
       return EcStatus::Success;
     }
-  }
+  } while (now() < DEADLINE);
 
   return EcStatus::InputBufferTimeout;
 }
@@ -72,12 +78,13 @@ EcStatus EcController::writeData(std::uint8_t data) {
 }
 
 EcStatus EcController::readByte(std::uint8_t &value) {
-  for (unsigned attempt = 0; attempt < waitAttempts; ++attempt) {
+  const Clock::time_point DEADLINE = now() + waitTimeout;
+  do {
     if ((portIo.readPort(EC_COMMAND_PORT) & OUTPUT_BUFFER_FULL) != 0) {
       value = portIo.readPort(EC_DATA_PORT);
       return EcStatus::Success;
     }
-  }
+  } while (now() < DEADLINE);
 
   return EcStatus::OutputBufferTimeout;
 }

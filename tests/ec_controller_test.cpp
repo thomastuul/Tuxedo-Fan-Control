@@ -1,5 +1,6 @@
 #include "ec_controller.h"
 
+#include <chrono>
 #include <cstddef>
 #include <cstdint>
 #include <iostream>
@@ -15,12 +16,15 @@ public:
   std::vector<std::uint8_t> commandReads;
   std::vector<std::uint8_t> dataReads;
   std::vector<std::pair<std::uint8_t, unsigned>> writes;
+  std::uint8_t commandFallback = 0;
+  unsigned commandReadCount = 0;
 
   std::uint8_t readPort(unsigned port) override {
     if (port == EC_COMMAND_PORT) {
-      return next(commandReads, commandReadIndex);
+      ++commandReadCount;
+      return next(commandReads, commandReadIndex, commandFallback);
     }
-    return next(dataReads, dataReadIndex);
+    return next(dataReads, dataReadIndex, 0);
   }
 
   void writePort(std::uint8_t value, unsigned port) override {
@@ -29,9 +33,10 @@ public:
 
 private:
   static std::uint8_t next(const std::vector<std::uint8_t> &values,
-                           std::size_t &index) {
+                           std::size_t &index,
+                           std::uint8_t fallback) {
     if (index >= values.size()) {
-      return 0;
+      return fallback;
     }
     return values[index++];
   }
@@ -39,6 +44,23 @@ private:
   std::size_t commandReadIndex = 0;
   std::size_t dataReadIndex = 0;
 };
+
+class FakeClock {
+public:
+  EcController::Clock::time_point now() {
+    const EcController::Clock::time_point RESULT = current;
+    current += std::chrono::microseconds(1);
+    return RESULT;
+  }
+
+private:
+  EcController::Clock::time_point current;
+};
+
+EcController makeTimedController(FakeEcPortIo &io, FakeClock &clock) {
+  return EcController(
+      io, std::chrono::microseconds(3), [&clock]() { return clock.now(); });
+}
 
 void expectTrue(const char *name, bool condition) {
   if (condition) {
@@ -62,33 +84,47 @@ void expectStatus(const char *name, EcStatus expected, EcStatus actual) {
 
 void testBoundedWaits() {
   FakeEcPortIo io;
-  io.commandReads = {0x02, 0x02};
-  EcController ec(io, 2);
+  io.commandFallback = 0x02;
+  FakeClock clock;
+  EcController ec = makeTimedController(io, clock);
   expectStatus("command input timeout",
                EcStatus::InputBufferTimeout,
                ec.sendCommand(0x99));
+  expectEqual("command timeout polls until deadline",
+              3,
+              static_cast<int>(io.commandReadCount));
   expectTrue("command timeout prevents write", io.writes.empty());
 
   FakeEcPortIo writeIo;
-  writeIo.commandReads = {0x02, 0x02};
-  EcController writeEc(writeIo, 2);
+  writeIo.commandFallback = 0x02;
+  FakeClock writeClock;
+  EcController writeEc = makeTimedController(writeIo, writeClock);
   expectStatus("data input timeout",
                EcStatus::InputBufferTimeout,
                writeEc.writeData(0x01));
+  expectEqual("data timeout polls until deadline",
+              3,
+              static_cast<int>(writeIo.commandReadCount));
   expectTrue("data timeout prevents write", writeIo.writes.empty());
 
   FakeEcPortIo flushIo;
-  flushIo.commandReads = {0x01, 0x01};
-  flushIo.dataReads = {12, 13};
-  EcController flushEc(flushIo, 2);
+  flushIo.commandFallback = 0x01;
+  FakeClock flushClock;
+  EcController flushEc = makeTimedController(flushIo, flushClock);
   expectStatus("flush timeout", EcStatus::FlushTimeout, flushEc.flush());
+  expectEqual("flush timeout polls until deadline",
+              3,
+              static_cast<int>(flushIo.commandReadCount));
 
   FakeEcPortIo readIo;
-  readIo.commandReads = {0x00, 0x00};
-  EcController readEc(readIo, 2);
+  FakeClock readClock;
+  EcController readEc = makeTimedController(readIo, readClock);
   std::uint8_t value = 77;
   expectStatus(
       "output timeout", EcStatus::OutputBufferTimeout, readEc.readByte(value));
+  expectEqual("output timeout polls until deadline",
+              3,
+              static_cast<int>(readIo.commandReadCount));
   expectEqual("timeout leaves output unchanged", 77, value);
 }
 
@@ -96,7 +132,7 @@ void testZeroIsValidData() {
   FakeEcPortIo io;
   io.commandReads = {0x01};
   io.dataReads = {0x00};
-  EcController ec(io, 2);
+  EcController ec(io);
   std::uint8_t value = 99;
   expectStatus("zero read status", EcStatus::Success, ec.readByte(value));
   expectEqual("zero read value", 0, value);
@@ -104,8 +140,10 @@ void testZeroIsValidData() {
 
 void testTransactionPropagation() {
   FakeEcPortIo fanIo;
-  fanIo.commandReads = {0x00, 0x02, 0x02};
-  EcController fanEc(fanIo, 2);
+  fanIo.commandReads = {0x00};
+  fanIo.commandFallback = 0x02;
+  FakeClock fanClock;
+  EcController fanEc = makeTimedController(fanIo, fanClock);
   expectStatus("fan transaction propagates timeout",
                EcStatus::InputBufferTimeout,
                fanEc.setFanSpeed(128));
@@ -118,8 +156,9 @@ void testTransactionPropagation() {
               static_cast<int>(fanIo.writes[0].second));
 
   FakeEcPortIo tempIo;
-  tempIo.commandReads = {0x00, 0x00, 0x00, 0x00};
-  EcController tempEc(tempIo, 2);
+  tempIo.commandReads = {0x00, 0x00, 0x00};
+  FakeClock tempClock;
+  EcController tempEc = makeTimedController(tempIo, tempClock);
   std::uint8_t temperature = 88;
   expectStatus("temperature transaction propagates read timeout",
                EcStatus::OutputBufferTimeout,
@@ -134,7 +173,7 @@ void testSuccessfulTemperatureTransaction() {
   FakeEcPortIo io;
   io.commandReads = {0x00, 0x00, 0x00, 0x01};
   io.dataReads = {42};
-  EcController ec(io, 2);
+  EcController ec(io);
   std::uint8_t temperature = 0;
   expectStatus(
       "temperature success", EcStatus::Success, ec.getLocalTemp(temperature));
@@ -153,7 +192,7 @@ void testSuccessfulTemperatureTransaction() {
 void testSuccessfulFanTransaction() {
   FakeEcPortIo io;
   io.commandReads = {0x00, 0x00, 0x00};
-  EcController ec(io, 2);
+  EcController ec(io);
   expectStatus("fan success", EcStatus::Success, ec.setFanSpeed(128));
   expectEqual("fan write count", 3, static_cast<int>(io.writes.size()));
   expectEqual("fan command", 0x99, io.writes[0].first);
