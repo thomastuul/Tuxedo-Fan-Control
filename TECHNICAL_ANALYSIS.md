@@ -30,10 +30,12 @@ Die Funktion `getLocalTemp()` arbeitet folgendermaßen:
 6. Ein Byte wird vom Daten-Port gelesen und zurückgegeben.
 
 Alle Wartevorgänge beim Leeren des Ausgabepuffers, beim Warten auf einen freien
-Eingabepuffer und beim Warten auf ein Ausgabebyte sind auf eine feste Zahl von
-Portabfragen begrenzt. Jeder Teilschritt liefert einen expliziten Status. Ein
-Timeout beendet die laufende Transaktion; insbesondere wird nach einem Timeout
-kein nachfolgendes Command- oder Datenbyte geschrieben. Das gelesene Byte wird
+Eingabepuffer und beim Warten auf ein Ausgabebyte sind durch einen zeitbasierten
+Timeout von einer Sekunde begrenzt. Die monotone Uhr
+`std::chrono::steady_clock` verhindert, dass Systemzeitänderungen die Frist
+beeinflussen. Jeder Teilschritt liefert einen expliziten Status. Ein Timeout
+beendet die laufende Transaktion; insbesondere wird nach einem Timeout kein
+nachfolgendes Command- oder Datenbyte geschrieben. Das gelesene Byte wird
 getrennt vom Status zurückgegeben, sodass der gültige EC-Wert `0` nicht mit
 einem Timeout verwechselt wird.
 

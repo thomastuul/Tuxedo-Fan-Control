@@ -1,10 +1,12 @@
 #pragma once
 
+#include <chrono>
 #include <cstdint>
+#include <functional>
 
 constexpr unsigned EC_COMMAND_PORT = 0x66;
 constexpr unsigned EC_DATA_PORT = 0x62;
-constexpr unsigned EC_WAIT_ATTEMPTS = 1000000;
+constexpr std::chrono::milliseconds EC_WAIT_TIMEOUT(1000);
 constexpr unsigned MAX_CONSECUTIVE_EC_FAILURES = 3;
 
 enum class EcStatus {
@@ -26,8 +28,12 @@ public:
 
 class EcController {
 public:
+  using Clock = std::chrono::steady_clock;
+  using NowFunction = std::function<Clock::time_point()>;
+
   explicit EcController(EcPortIo &portIo,
-                        unsigned waitAttempts = EC_WAIT_ATTEMPTS);
+                        Clock::duration waitTimeout = EC_WAIT_TIMEOUT,
+                        NowFunction nowFunction = Clock::now);
 
   EcStatus flush();
   EcStatus sendCommand(std::uint8_t command);
@@ -40,7 +46,8 @@ private:
   EcStatus waitForInputBuffer();
 
   EcPortIo &portIo;
-  unsigned waitAttempts;
+  Clock::duration waitTimeout;
+  NowFunction now;
 };
 
 bool ecFailureLimitReached(unsigned &consecutiveFailures);
