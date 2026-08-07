@@ -104,6 +104,8 @@ const ExpectedPoint FREEZY[] = {{0, 20},
 
 } // namespace
 
+int runEcControllerTests();
+
 int main() {
   expectProfile(
       "silent name", FanProfile::Silent, fanProfileFromName("silent"));
@@ -153,5 +155,6 @@ int main() {
   expectEqual(
       "speed above maximum", FAN_MAX_SPEED, clampFanSpeed(FAN_MAX_SPEED + 45));
 
+  failures += runEcControllerTests();
   return failures == 0 ? 0 : 1;
 }

@@ -6,12 +6,9 @@
 #include <sys/io.h>
 #include <unistd.h>
 
+#include "ec_controller.h"
 #include "fan_curve.h"
 
-constexpr unsigned EC_COMMAND_PORT = 0x66;
-constexpr unsigned EC_DATA_PORT = 0x62;
-constexpr unsigned TEMP_COMMAND = 0x9E;
-constexpr int TEMP_INDEX = 1;
 constexpr unsigned REFRESH_RATE_MS = 250;
 constexpr unsigned MAX_FAN_SET_INTERVAL_MS = 2000;
 
@@ -21,59 +18,23 @@ static bool ecInit() {
   }
 
   if (ioperm(EC_COMMAND_PORT, 1, 1) != 0) {
+    ioperm(EC_DATA_PORT, 1, 0);
     return false;
   }
 
   return true;
 }
 
-static void ecFlush() {
-  while ((inb(EC_COMMAND_PORT) & 0x1) == 0x1) {
-    inb(EC_DATA_PORT);
-  }
-}
-
-static void sendCommand(unsigned command) {
-  int tt = 0;
-  while ((inb(EC_COMMAND_PORT) & 2) != 0) {
-    tt++;
-    if (tt > 30000) {
-      break;
-    }
+class SystemEcPortIo : public EcPortIo {
+public:
+  std::uint8_t readPort(unsigned port) override {
+    return inb(port);
   }
 
-  outb(command, EC_COMMAND_PORT);
-}
-
-static void writeData(unsigned data) {
-  while ((inb(EC_COMMAND_PORT) & 2) != 0) {
+  void writePort(std::uint8_t value, unsigned port) override {
+    outb(value, port);
   }
-
-  outb(data, EC_DATA_PORT);
-}
-
-static int readByte() {
-  for (int attempts = 1000000; attempts > 0; --attempts) {
-    if ((inb(EC_COMMAND_PORT) & 1) != 0) {
-      return inb(EC_DATA_PORT);
-    }
-  }
-
-  return 0;
-}
-
-static void setFanSpeed(int speed) {
-  sendCommand(0x99);
-  writeData(0x01); // ID
-  writeData(speed);
-}
-
-static int getLocalTemp() {
-  ecFlush();
-  sendCommand(TEMP_COMMAND);
-  writeData(TEMP_INDEX);
-  return readByte();
-}
+};
 
 static std::uint64_t nowMilliseconds() {
   const auto NOW = std::chrono::steady_clock::now();
@@ -94,24 +55,53 @@ int main(int argc, const char *argv[]) {
 
   int lastFanSpeed = -1;
   std::uint64_t lastTimeFanUpdate = 0;
+  unsigned consecutiveEcFailures = 0;
+  SystemEcPortIo portIo;
+  EcController ec(portIo);
 
   for (;;) {
     const std::uint64_t NOW = nowMilliseconds();
-    int temp = getLocalTemp();
-    int dynamicFanSpeed = calculateDynamicFanSpeed(temp, PROFILE);
+    std::uint8_t temperature = 0;
+    EcStatus status = ec.getLocalTemp(temperature);
+    if (status != EcStatus::Success) {
+      std::cerr << "EC temperature read failed: " << ecStatusMessage(status)
+                << '\n';
+      if (ecFailureLimitReached(consecutiveEcFailures)) {
+        std::cerr << "Too many consecutive EC failures; stopping fan control "
+                     "without issuing an undocumented recovery command\n";
+        return EXIT_FAILURE;
+      }
+      usleep(REFRESH_RATE_MS * 1000);
+      continue;
+    }
 
-    if (lastFanSpeed != dynamicFanSpeed ||
+    const int TEMP = temperature;
+    const int DYNAMIC_FAN_SPEED = calculateDynamicFanSpeed(TEMP, PROFILE);
+
+    if (lastFanSpeed != DYNAMIC_FAN_SPEED ||
         NOW > lastTimeFanUpdate + MAX_FAN_SET_INTERVAL_MS) {
-      setFanSpeed(clampFanSpeed(dynamicFanSpeed));
+      status = ec.setFanSpeed(
+          static_cast<std::uint8_t>(clampFanSpeed(DYNAMIC_FAN_SPEED)));
+      if (status != EcStatus::Success) {
+        std::cerr << "EC fan write failed: " << ecStatusMessage(status) << '\n';
+        if (ecFailureLimitReached(consecutiveEcFailures)) {
+          std::cerr << "Too many consecutive EC failures; stopping fan control "
+                       "without issuing an undocumented recovery command\n";
+          return EXIT_FAILURE;
+        }
+        usleep(REFRESH_RATE_MS * 1000);
+        continue;
+      }
       lastTimeFanUpdate = NOW;
 #ifdef VERBOSE
-      std::cout << "T:" << temp << "°C | set fan to "
-                << std::round(static_cast<float>(dynamicFanSpeed) /
+      std::cout << "T:" << TEMP << "°C | set fan to "
+                << std::round(static_cast<float>(DYNAMIC_FAN_SPEED) /
                               FAN_MAX_SPEED * 100)
                 << "%\n";
 #endif
     }
-    lastFanSpeed = dynamicFanSpeed;
+    resetEcFailures(consecutiveEcFailures);
+    lastFanSpeed = DYNAMIC_FAN_SPEED;
     usleep(REFRESH_RATE_MS * 1000);
   }
 }
