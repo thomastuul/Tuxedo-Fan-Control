@@ -99,9 +99,10 @@ int dutyPercentForTemperature(int temperature, FanProfile profile) {
 } // namespace
 
 FanProfile fanProfileFromName(const char *name) {
-  if (name == nullptr) {
+  if (!isKnownFanProfileName(name)) {
     return FanProfile::Balanced;
   }
+
   if (std::strcmp(name, "silent") == 0) {
     return FanProfile::Silent;
   }
@@ -115,6 +116,28 @@ FanProfile fanProfileFromName(const char *name) {
     return FanProfile::Freezy;
   }
   return FanProfile::Balanced;
+}
+
+bool isKnownFanProfileName(const char *name) {
+  if (name == nullptr) {
+    return false;
+  }
+  if (std::strcmp(name, "silent") == 0) {
+    return true;
+  }
+  if (std::strcmp(name, "quiet") == 0) {
+    return true;
+  }
+  if (std::strcmp(name, "balanced") == 0) {
+    return true;
+  }
+  if (std::strcmp(name, "cool") == 0) {
+    return true;
+  }
+  if (std::strcmp(name, "freezy") == 0) {
+    return true;
+  }
+  return false;
 }
 
 FanProfile fanProfileFromCommandLine(int argc, const char *const argv[]) {

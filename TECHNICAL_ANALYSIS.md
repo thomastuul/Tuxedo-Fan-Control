@@ -31,17 +31,20 @@ Die Funktion `getLocalTemp()` arbeitet folgendermaßen:
 
 Alle Wartevorgänge beim Leeren des Ausgabepuffers, beim Warten auf einen freien
 Eingabepuffer und beim Warten auf ein Ausgabebyte sind durch einen zeitbasierten
-Timeout von einer Sekunde begrenzt. Die monotone Uhr
-`std::chrono::steady_clock` verhindert, dass Systemzeitänderungen die Frist
-beeinflussen. Jeder Teilschritt liefert einen expliziten Status. Ein Timeout
-beendet die laufende Transaktion; insbesondere wird nach einem Timeout kein
-nachfolgendes Command- oder Datenbyte geschrieben. Das gelesene Byte wird
-getrennt vom Status zurückgegeben, sodass der gültige EC-Wert `0` nicht mit
-einem Timeout verwechselt wird.
+Timeout von einer Sekunde begrenzt. Zwischen erfolglosen Polls wartet der Code
+kurz, damit ein dauerhaft belegter EC-Puffer keine enge Busy-Wait-Schleife mit
+hoher CPU-Last erzeugt. Die monotone Uhr `std::chrono::steady_clock`
+verhindert, dass Systemzeitänderungen die Frist beeinflussen. Jeder Teilschritt
+liefert einen expliziten Status. Ein Timeout beendet die laufende Transaktion;
+insbesondere wird nach einem Timeout kein nachfolgendes Command- oder Datenbyte
+geschrieben. Das gelesene Byte wird getrennt vom Status zurückgegeben, sodass
+der gültige EC-Wert `0` nicht mit einem Timeout verwechselt wird.
 
-Der gelesene Wert wird unmittelbar als Temperatur in Grad Celsius verwendet.
-Der Code geht also davon aus, dass der EC bei Befehl `0x9E` und Index `1` einen
-Celsiuswert liefert.
+Der gelesene Wert wird als Temperatur in Grad Celsius interpretiert. Werte
+außerhalb von 10 bis 110 °C und Sprünge von mehr als 30 °C gegenüber dem letzten
+plausiblen Messwert werden als implausibel verworfen und führen in diesem Zyklus
+zu keinem Lüfterbefehl. Der Code geht weiterhin davon aus, dass der EC bei
+Befehl `0x9E` und Index `1` grundsätzlich einen Celsiuswert liefert.
 
 Aus dem Quelltext lässt sich nicht sicher bestimmen, ob dieser EC-Wert die
 CPU-Kerntemperatur, die CPU-Package-Temperatur oder einen anderen internen
@@ -194,8 +197,9 @@ Laptopmodell und dessen Firmware verifiziert werden.
 ### Profilauswahl und thermische Auswirkungen
 
 Das Profil wird mit `--profile silent|quiet|balanced|cool|freezy` ausgewählt.
-Ohne gültigen Wert wird `balanced` verwendet. Die systemd-Unit setzt diesen
-Standard und liest optional `/etc/default/tuxedo-fan-control`; dort kann
+Ohne gültigen Wert wird `balanced` verwendet und eine Diagnose geloggt, damit
+die Lüftersteuerung trotz Fehlkonfiguration weiterläuft. Die systemd-Unit setzt
+diesen Standard und liest optional `/etc/default/tuxedo-fan-control`; dort kann
 beispielsweise `TUXEDO_FAN_PROFILE=quiet` gesetzt werden.
 
 `silent` und `quiet` lassen den Lüfter bei niedrigeren Temperaturen aus und
@@ -210,34 +214,42 @@ abhängig.
 ## Regelzyklus
 
 Die Regelung liest die Temperatur alle 250 ms und folgt dem zugehörigen
-Tabellenwert unmittelbar. Der aktuelle EC-Wert wird bei einer Änderung sowie
-spätestens alle zwei Sekunden erneut an den EC gesendet.
+Tabellenwert unmittelbar, sofern der Messwert plausibel ist. Der aktuelle
+EC-Wert wird bei einer Änderung sowie spätestens alle zwei Sekunden erneut an
+den EC gesendet.
 
-Schlägt eine Temperaturtransaktion fehl, wird aus dem ungültigen Messwert kein
-Lüftersollwert berechnet und in diesem Zyklus kein Lüfterbefehl gesendet. Ein
-fehlgeschlagener Lüfterbefehl wird ebenfalls als Fehler des Regelzyklus
-behandelt. Nach einem vollständig erfolgreichen Zyklus wird der Fehlerzähler
-zurückgesetzt. Nach drei aufeinanderfolgenden fehlgeschlagenen Zyklen beendet
-sich der Daemon mit einem Fehler und einer Diagnose. Die systemd-Unit startet
-ihn wegen `Restart=on-failure` anschließend entsprechend der systemd-Richtlinie
-neu.
+Schlägt eine Temperaturtransaktion fehl oder liefert der EC einen implausiblen
+Temperaturwert, wird aus diesem Wert kein Lüftersollwert berechnet und in diesem
+Zyklus kein regulärer Lüfterbefehl gesendet. Ein fehlgeschlagener Lüfterbefehl
+wird ebenfalls als Fehler des Regelzyklus behandelt. Nach einem vollständig
+erfolgreichen Zyklus wird der Fehlerzähler zurückgesetzt. Nach drei
+aufeinanderfolgenden fehlgeschlagenen Zyklen beendet sich der Daemon mit einem
+Fehler und einer Diagnose. Die systemd-Unit startet ihn wegen
+`Restart=on-failure` mit einer Wartezeit und Start-Limitierung neu.
 
-Der Code versucht vor dem Beenden nicht, eine vermeintliche Notfall-
-Lüfterstufe zu setzen. Zwar ist `255` der höchste von den Profilen verwendete
-Sollwert, aber die vorliegenden Unterlagen garantieren nicht modell- und
-firmwareübergreifend, dass eine weitere, möglicherweise ebenfalls nur teilweise
-übertragene `0x99`-Transaktion nach einem Kommunikationsfehler einen sicheren
-Hardwarezustand herstellt. Die weitere Schutzwirkung der Firmware und der
-Hardware bleibt daher erforderlich.
+Bei kontrolliertem Stop per Signal und nach wiederholt implausiblen
+Temperaturwerten versucht der Code, vor dem Beenden den höchsten von den
+Profilen verwendeten Sollwert `255` zu setzen. Nach direkten
+EC-Kommunikationsfehlern wird dagegen weiterhin keine zusätzliche
+Recovery-Transaktion erzwungen: Die vorliegenden Unterlagen garantieren nicht
+modell- und firmwareübergreifend, dass eine weitere, möglicherweise ebenfalls
+nur teilweise übertragene `0x99`-Transaktion einen sicheren Hardwarezustand
+herstellt. Die weitere Schutzwirkung der Firmware und der Hardware bleibt daher
+erforderlich.
 
 ## Berechtigungen und Betriebsrisiken
 
 Der systemd-Dienst läuft als `root`, weil `ioperm()`, `inb()` und `outb()` für
-direkte I/O-Portzugriffe privilegierte Rechte benötigen.
+direkte I/O-Portzugriffe privilegierte Rechte benötigen. Die Unit begrenzt die
+verfügbaren Fähigkeiten auf `CAP_SYS_RAWIO`, reduziert die Priorität gegenüber
+der früheren Konfiguration und aktiviert mehrere systemd-Härtungen wie
+Dateisystemschutz, privates `/tmp`, eingeschränkte Address-Families und
+Start-Limits.
 
-Die EC-Funktionen begrenzen ihre Wartevorgänge und propagieren
-Kommunikationsfehler bis in die Regelschleife. Es gibt weiterhin keine
-modellunabhängige Validierung eines erfolgreich gelesenen Temperaturbytes und
+Die EC-Funktionen begrenzen ihre Wartevorgänge, pausieren zwischen Polls und
+propagieren Kommunikationsfehler bis in die Regelschleife. Erfolgreich gelesene
+Temperaturbytes werden nur anhand allgemeiner Plausibilitätsgrenzen bewertet;
+es gibt weiterhin keine modellunabhängige Validierung der Sensoridentität und
 keinen dokumentierten separaten Notfallbefehl in der Software. Die Regelung ist
 daher von der EC-Implementierung und Firmware des jeweiligen Laptops abhängig.
 Eine falsche Port- oder Befehlsbelegung kann zu plausibel erscheinenden, aber

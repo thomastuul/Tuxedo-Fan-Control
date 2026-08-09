@@ -1,5 +1,7 @@
 [Unit]
 Description=Tuxedo laptop automatic fan control
+StartLimitIntervalSec=60
+StartLimitBurst=3
  
 [Service]
 Type=simple
@@ -13,7 +15,17 @@ EnvironmentFile=-/etc/default/tuxedo-fan-control
 ExecStart=@CMAKE_INSTALL_FULL_BINDIR@/Tuxedo-Fan-Control --profile ${TUXEDO_FAN_PROFILE}
  
 Restart=on-failure
-Nice=-20
+RestartSec=5s
+Nice=-5
+NoNewPrivileges=true
+CapabilityBoundingSet=CAP_SYS_RAWIO
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+RestrictAddressFamilies=AF_UNIX
+LockPersonality=true
+MemoryDenyWriteExecute=true
+SystemCallArchitectures=native
  
 [Install]
 WantedBy=multi-user.target
