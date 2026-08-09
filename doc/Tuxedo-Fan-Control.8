@@ -26,6 +26,8 @@ oder
 .BR freezy .
 Ein fehlender oder ungültiger Wert wählt das Standardprofil
 .BR balanced .
+Ungültige Werte werden protokolliert, damit die Lüftersteuerung trotz
+Fehlkonfiguration weiterläuft.
 .SH FAN CURVE
 Die fünf diskreten CPU-Kennlinien des TUXEDO Control Centers werden unterstützt.
 Die Prozentwerte werden mit Rundung in den EC-Bereich 0 bis 255 umgerechnet.
@@ -46,7 +48,8 @@ auf nicht unterstützter Hardware betrieben werden.
 .SH SYSTEMD
 Die mitgelieferte Unit startet das Programm als Benutzer
 .BR root (8)
-mit hoher Priorität und startet es nach einem Fehler neu. Die Unit wird nach
+mit begrenzten Raw-I/O-Rechten, systemd-Härtungen, Restart-Verzögerung und
+Start-Limitierung. Die Unit wird nach
 .I /usr/lib/systemd/system/Tuxedo-Fan-Control.service
 installiert, wenn das Debian-Paket verwendet wird. Eine direkte lokale
 CMake-Installation verwendet standardmäßig

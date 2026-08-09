@@ -26,7 +26,8 @@ create that file with, for example:
 TUXEDO_FAN_PROFILE=quiet
 ```
 
-If the file is absent or its value is invalid, the daemon uses `balanced`.
+If the file is absent or its value is invalid, the daemon logs a warning and
+uses `balanced`.
 Changing the active profile requires an intentional service restart. The
 percentage is converted with rounding to the EC range 0–255. The complete
 tables, their thermal implications, and the EC conversion are documented in
@@ -41,12 +42,16 @@ sudo apt install -y g++ make
 The program accesses the embedded-controller I/O ports and therefore must run
 as root.
 
-EC buffer waits are bounded and transaction failures are reported explicitly.
-The daemon skips fan control when a temperature read fails and exits with an
-error after three consecutive failed control cycles. The supplied systemd unit
-then applies its `Restart=on-failure` policy. Because the available hardware
-documentation does not guarantee a model-independent emergency EC command, the
-daemon does not issue a speculative recovery write before exiting.
+EC buffer waits are bounded, briefly sleep between polls, and transaction
+failures are reported explicitly. The daemon skips fan control when a
+temperature read fails or the returned temperature is implausible. It exits with
+an error after three consecutive failed control cycles, and the supplied systemd
+unit then applies its rate-limited `Restart=on-failure` policy. During a
+controlled shutdown or repeated implausible-temperature failure it attempts to
+set the fan to the maximum profile value before exiting. Because the available
+hardware documentation does not guarantee a model-independent emergency EC
+command, direct EC communication failures still stop the daemon without issuing
+a speculative recovery write.
 
 ## Build and install
 
@@ -62,7 +67,8 @@ the project, installs `Tuxedo-Fan-Control` in `/usr/local/bin`, installs and
 enables `Tuxedo-Fan-Control.service`, and starts the service. The final command
 is a system installation and must only be run after the tests have passed.
 CMake generates the unit with an `ExecStart` path matching the selected
-installation prefix.
+installation prefix. The unit runs as root with a reduced capability bounding
+set for raw I/O, filesystem protection, restart backoff, and start-rate limits.
 
 For direct CMake usage:
 

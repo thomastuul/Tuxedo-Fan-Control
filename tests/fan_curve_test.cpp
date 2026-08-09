@@ -120,6 +120,9 @@ int main() {
                 fanProfileFromName("invalid"));
   expectProfile(
       "null name defaults", FanProfile::Balanced, fanProfileFromName(nullptr));
+  expectEqual("known profile accepted", 1, isKnownFanProfileName("quiet"));
+  expectEqual("unknown profile rejected", 0, isKnownFanProfileName("invalid"));
+  expectEqual("null profile rejected", 0, isKnownFanProfileName(nullptr));
 
   const char *validArguments[] = {"program", "--profile", "quiet"};
   const char *invalidArguments[] = {"program", "--other", "cool"};

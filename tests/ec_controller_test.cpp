@@ -57,9 +57,23 @@ private:
   EcController::Clock::time_point current;
 };
 
-EcController makeTimedController(FakeEcPortIo &io, FakeClock &clock) {
+class PollWaitCounter {
+public:
+  void wait() {
+    ++waitCount;
+  }
+
+  int waitCount = 0;
+};
+
+EcController makeTimedController(FakeEcPortIo &io,
+                                 FakeClock &clock,
+                                 PollWaitCounter &waitCounter) {
   return EcController(
-      io, std::chrono::microseconds(3), [&clock]() { return clock.now(); });
+      io,
+      std::chrono::microseconds(3),
+      [&clock]() { return clock.now(); },
+      [&waitCounter]() { waitCounter.wait(); });
 }
 
 void expectTrue(const char *name, bool condition) {
@@ -86,45 +100,58 @@ void testBoundedWaits() {
   FakeEcPortIo io;
   io.commandFallback = 0x02;
   FakeClock clock;
-  EcController ec = makeTimedController(io, clock);
+  PollWaitCounter waitCounter;
+  EcController ec = makeTimedController(io, clock, waitCounter);
   expectStatus("command input timeout",
                EcStatus::InputBufferTimeout,
                ec.sendCommand(0x99));
   expectEqual("command timeout polls until deadline",
               3,
               static_cast<int>(io.commandReadCount));
+  expectEqual("command timeout waits between polls", 3, waitCounter.waitCount);
   expectTrue("command timeout prevents write", io.writes.empty());
 
   FakeEcPortIo writeIo;
   writeIo.commandFallback = 0x02;
   FakeClock writeClock;
-  EcController writeEc = makeTimedController(writeIo, writeClock);
+  PollWaitCounter writeWaitCounter;
+  EcController writeEc =
+      makeTimedController(writeIo, writeClock, writeWaitCounter);
   expectStatus("data input timeout",
                EcStatus::InputBufferTimeout,
                writeEc.writeData(0x01));
   expectEqual("data timeout polls until deadline",
               3,
               static_cast<int>(writeIo.commandReadCount));
+  expectEqual(
+      "data timeout waits between polls", 3, writeWaitCounter.waitCount);
   expectTrue("data timeout prevents write", writeIo.writes.empty());
 
   FakeEcPortIo flushIo;
   flushIo.commandFallback = 0x01;
   FakeClock flushClock;
-  EcController flushEc = makeTimedController(flushIo, flushClock);
+  PollWaitCounter flushWaitCounter;
+  EcController flushEc =
+      makeTimedController(flushIo, flushClock, flushWaitCounter);
   expectStatus("flush timeout", EcStatus::FlushTimeout, flushEc.flush());
   expectEqual("flush timeout polls until deadline",
               3,
               static_cast<int>(flushIo.commandReadCount));
+  expectEqual(
+      "flush timeout waits between polls", 3, flushWaitCounter.waitCount);
 
   FakeEcPortIo readIo;
   FakeClock readClock;
-  EcController readEc = makeTimedController(readIo, readClock);
+  PollWaitCounter readWaitCounter;
+  EcController readEc = makeTimedController(readIo, readClock, readWaitCounter);
   std::uint8_t value = 77;
   expectStatus(
       "output timeout", EcStatus::OutputBufferTimeout, readEc.readByte(value));
   expectEqual("output timeout polls until deadline",
               3,
               static_cast<int>(readIo.commandReadCount));
+  expectEqual(
+      "output timeout waits between polls", 3, readWaitCounter.waitCount);
   expectEqual("timeout leaves output unchanged", 77, value);
 }
 
@@ -143,7 +170,8 @@ void testTransactionPropagation() {
   fanIo.commandReads = {0x00};
   fanIo.commandFallback = 0x02;
   FakeClock fanClock;
-  EcController fanEc = makeTimedController(fanIo, fanClock);
+  PollWaitCounter fanWaitCounter;
+  EcController fanEc = makeTimedController(fanIo, fanClock, fanWaitCounter);
   expectStatus("fan transaction propagates timeout",
                EcStatus::InputBufferTimeout,
                fanEc.setFanSpeed(128));
@@ -158,7 +186,8 @@ void testTransactionPropagation() {
   FakeEcPortIo tempIo;
   tempIo.commandReads = {0x00, 0x00, 0x00};
   FakeClock tempClock;
-  EcController tempEc = makeTimedController(tempIo, tempClock);
+  PollWaitCounter tempWaitCounter;
+  EcController tempEc = makeTimedController(tempIo, tempClock, tempWaitCounter);
   std::uint8_t temperature = 88;
   expectStatus("temperature transaction propagates read timeout",
                EcStatus::OutputBufferTimeout,
@@ -212,6 +241,37 @@ void testConsecutiveFailurePolicy() {
       "success resets failures", 0, static_cast<int>(consecutiveFailures));
 }
 
+void testTemperaturePlausibilityPolicy() {
+  expectTrue("normal first temperature is plausible",
+             isPlausibleTemperature(42, false, 0));
+  expectTrue("low impossible temperature is rejected",
+             !isPlausibleTemperature(0, false, 0));
+  expectTrue("high impossible temperature is rejected",
+             !isPlausibleTemperature(120, false, 0));
+  expectTrue("small temperature step is plausible",
+             isPlausibleTemperature(62, true, 55));
+  expectTrue("large temperature drop is rejected",
+             !isPlausibleTemperature(20, true, 70));
+  expectTrue("large temperature jump is rejected",
+             !isPlausibleTemperature(100, true, 60));
+}
+
+void testAcceptedTemperatureUpdatesPlausibilityBaseline() {
+  bool hasPreviousTemperature = true;
+  std::uint8_t previousTemperature = 50;
+
+  expectTrue("large but plausible step is accepted",
+             acceptPlausibleTemperature(
+                 80, hasPreviousTemperature, previousTemperature));
+  expectEqual("accepted step refreshes baseline", 80, previousTemperature);
+  expectTrue("baseline remains initialized", hasPreviousTemperature);
+
+  expectTrue("next normal step uses refreshed baseline",
+             acceptPlausibleTemperature(
+                 85, hasPreviousTemperature, previousTemperature));
+  expectEqual("next accepted step refreshes baseline", 85, previousTemperature);
+}
+
 } // namespace
 
 int runEcControllerTests() {
@@ -221,5 +281,7 @@ int runEcControllerTests() {
   testSuccessfulTemperatureTransaction();
   testSuccessfulFanTransaction();
   testConsecutiveFailurePolicy();
+  testTemperaturePlausibilityPolicy();
+  testAcceptedTemperatureUpdatesPlausibilityBaseline();
   return failures;
 }
