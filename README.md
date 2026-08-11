@@ -44,8 +44,11 @@ as root.
 
 Runtime EC and fan access also requires the TUXEDO kernel driver stack for the
 target laptop. On current systems this is provided by `tuxedo-drivers`; older
-installations may use `tuxedo-keyboard`. Before enabling the service, verify
-that the required modules are installed and loaded, for example
+installations may use the archived `tuxedo-keyboard` project. These packages
+are not part of the default Debian or Ubuntu repositories in a standard
+installation. Add the distribution-specific TUXEDO package repository and follow
+TUXEDO's driver installation instructions before enabling this service. Then
+verify that the required modules are installed and loaded, for example
 `tuxedo_keyboard` and, where applicable, `tuxedo_io`:
 
 ```sh
