@@ -36,11 +36,26 @@ tables, their thermal implications, and the EC conversion are documented in
 ## Prerequisites
 
 ```sh
-sudo apt install -y g++ make
+sudo apt install -y g++ make cmake
 ```
 
 The program accesses the embedded-controller I/O ports and therefore must run
 as root.
+
+Runtime EC and fan access also requires the TUXEDO kernel driver stack for the
+target laptop. On current systems this is provided by `tuxedo-drivers`; older
+installations may use `tuxedo-keyboard`. Before enabling the service, verify
+that the required modules are installed and loaded, for example
+`tuxedo_keyboard` and, where applicable, `tuxedo_io`:
+
+```sh
+lsmod | grep -E 'tuxedo_keyboard|tuxedo_io|tuxedo'
+```
+
+If Secure Boot blocks unsigned DKMS modules, the EC/fan interface can be
+unavailable even though the driver package is installed. Enroll the module
+signing key or disable Secure Boot according to the distribution's TUXEDO driver
+instructions before starting this fan-control service.
 
 EC buffer waits are bounded, briefly sleep between polls, and transaction
 failures are reported explicitly. The daemon skips fan control when a
@@ -124,7 +139,9 @@ The generated `.deb` file and its SHA-256 checksum are written to
 `package-output/`. The package installs the executable below `/usr/bin`, the
 systemd unit below `/usr/lib/systemd/system`, the administrator manpage and
 the project documentation. Installing the package does not automatically
-enable or start the hardware-specific service.
+enable or start the hardware-specific service. The package declares `systemd`
+and generated shared-library dependencies such as `libc6`, `libgcc-s1`, and
+`libstdc++6`; it does not install the hardware-specific TUXEDO kernel drivers.
 
 The GitHub Actions workflow `Debian package` performs the same containerized
 build for pull requests and pushes to `master`, for tags beginning with `v`,

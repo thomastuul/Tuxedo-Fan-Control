@@ -45,6 +45,18 @@ Lüfterbefehl: 0x99, Kanal 0x01
 .PP
 Die Befehle und Datenformate sind laptopspezifisch. Das Programm darf nicht
 auf nicht unterstützter Hardware betrieben werden.
+.PP
+Der EC-/Lüfterzugriff setzt voraus, dass der passende TUXEDO-Kernel-Treiber
+installiert und geladen ist. Auf aktuellen Systemen stellt
+.B tuxedo-drivers
+diese Module bereit; ältere Installationen verwenden ggf.
+.BR tuxedo-keyboard .
+Relevant sind insbesondere
+.B tuxedo_keyboard
+und, je nach Gerät,
+.BR tuxedo_io .
+Blockiert Secure Boot unsignierte DKMS-Module, kann die EC-Schnittstelle trotz
+installiertem Treiberpaket fehlen.
 .SH SYSTEMD
 Die mitgelieferte Unit startet das Programm als Benutzer
 .BR root (8)
