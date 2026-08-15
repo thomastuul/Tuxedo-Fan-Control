@@ -1,5 +1,6 @@
 [Unit]
 Description=Tuxedo laptop automatic fan control
+ConditionPathExists=/dev/tuxedo_io
 StartLimitIntervalSec=60
 StartLimitBurst=3
  
@@ -18,7 +19,9 @@ Restart=on-failure
 RestartSec=5s
 Nice=-5
 NoNewPrivileges=true
-CapabilityBoundingSet=CAP_SYS_RAWIO
+CapabilityBoundingSet=
+DevicePolicy=closed
+DeviceAllow=/dev/tuxedo_io rw
 ProtectSystem=strict
 ProtectHome=true
 PrivateTmp=true

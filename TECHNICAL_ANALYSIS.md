@@ -2,75 +2,66 @@
 
 ## Überblick
 
-`Tuxedo-Fan-Control` kommuniziert direkt mit dem Embedded Controller (EC) des
-Laptops. Die Software verwendet weder `/sys/class/thermal` noch `hwmon`,
-`lm-sensors` oder ein anderes Linux-Sensorinterface.
+`Tuxedo-Fan-Control` kommuniziert über das Gerät `/dev/tuxedo_io` mit dem
+signierten TUXEDO-Kerneltreiber. Nur der Kerneltreiber greift auf ACPI/WMI und
+den Embedded Controller (EC) des Laptops zu. Der Dienst verwendet weder direkte
+x86-I/O-Portzugriffe noch `/dev/mem` oder `/dev/port` und funktioniert deshalb
+auch mit dem durch Secure Boot aktivierten Kernel-Lockdown.
 
-Die Kommunikation erfolgt über direkte x86-I/O-Portzugriffe. Der Dienst muss
-deshalb als `root` laufen.
+Die verwendete IOCTL-API entspricht der Clevo-Schnittstelle von
+`tuxedo-drivers` 4.22.3 und der offiziellen Implementierung im TUXEDO Control
+Center 3.0.9
+([`tuxedo_io_api.hh`](https://github.com/tuxedocomputers/tuxedo-control-center/blob/1a4d39ba5795e08e4e1ff6245ac908e2712262bf/src/native-lib/tuxedo_io_lib/tuxedo_io_api.hh)).
+Beim Start muss `R_HWCHECK_CL` das Gerät als unterstützte Clevo-Hardware
+identifizieren; andernfalls nimmt der Dienst keine Lüfteränderung vor.
 
 ## Temperaturauslesung
 
-In `Tuxedo-Fan-Control.cpp` sind folgende EC-Schnittstellen definiert:
+Die Funktion `getLocalTemp()` ruft `R_CL_FANINFO1` auf. Das zurückgegebene
+32-Bit-Wort ist entsprechend der offiziellen TUXEDO-Control-Center-
+Implementierung aufgebaut:
 
-| Funktion         |   Wert |
-| ---------------- | -----: |
-| EC-Command-Port  | `0x66` |
-| EC-Daten-Port    | `0x62` |
-| Temperaturbefehl | `0x9E` |
-| Temperaturindex  |    `1` |
+| Bits  | Bedeutung                              |
+| ----- | -------------------------------------- |
+| 0–7   | aktueller Rohwert von Lüfter 1         |
+| 8–15  | erster, uneinheitlicher Temperaturwert |
+| 16–23 | bevorzugter lokaler Temperaturwert     |
 
-Die Funktion `getLocalTemp()` arbeitet folgendermaßen:
-
-1. Mit `ioperm()` werden die beiden I/O-Ports für den Prozess freigeschaltet.
-2. Der EC-Eingangspuffer wird geleert.
-3. Der Befehl `0x9E` wird an den Command-Port gesendet.
-4. Der Index `1` wird an den Daten-Port geschrieben.
-5. Das Programm wartet auf ein verfügbares Datenbyte.
-6. Ein Byte wird vom Daten-Port gelesen und zurückgegeben.
-
-Alle Wartevorgänge beim Leeren des Ausgabepuffers, beim Warten auf einen freien
-Eingabepuffer und beim Warten auf ein Ausgabebyte sind durch einen zeitbasierten
-Timeout von einer Sekunde begrenzt. Zwischen erfolglosen Polls wartet der Code
-kurz, damit ein dauerhaft belegter EC-Puffer keine enge Busy-Wait-Schleife mit
-hoher CPU-Last erzeugt. Die monotone Uhr `std::chrono::steady_clock`
-verhindert, dass Systemzeitänderungen die Frist beeinflussen. Jeder Teilschritt
-liefert einen expliziten Status. Ein Timeout beendet die laufende Transaktion;
-insbesondere wird nach einem Timeout kein nachfolgendes Command- oder Datenbyte
-geschrieben. Das gelesene Byte wird getrennt vom Status zurückgegeben, sodass
-der gültige EC-Wert `0` nicht mit einem Timeout verwechselt wird.
+Der Dienst verwendet ausschließlich Bits 16–23. Fehler beim Öffnen des Geräts,
+bei der Hardwareidentifikation oder beim IOCTL werden als explizite Statuswerte
+bis in die Regelschleife propagiert.
 
 Der gelesene Wert wird als Temperatur in Grad Celsius interpretiert. Werte
 außerhalb von 10 bis 110 °C und Sprünge von mehr als 30 °C gegenüber dem letzten
 plausiblen Messwert werden als implausibel verworfen und führen in diesem Zyklus
-zu keinem Lüfterbefehl. Der Code geht weiterhin davon aus, dass der EC bei
-Befehl `0x9E` und Index `1` grundsätzlich einen Celsiuswert liefert.
+zu keinem Lüfterbefehl. Der Code geht entsprechend der TUXEDO-API davon aus,
+dass dieses Byte einen Celsiuswert liefert.
 
 Aus dem Quelltext lässt sich nicht sicher bestimmen, ob dieser EC-Wert die
 CPU-Kerntemperatur, die CPU-Package-Temperatur oder einen anderen internen
 Temperatursensor repräsentiert. Sicher ist nur, dass kein Linux-Temperatur-
-interface abgefragt wird, sondern ein laptopspezifischer EC-Messwert.
+interface abgefragt wird, sondern ein vom TUXEDO-Treiber gelieferter,
+laptopspezifischer EC-Messwert.
 
 ## Lüfteransteuerung
 
-Die Lüftersteuerung erfolgt ebenfalls direkt über den EC. Die Funktion
-`setFanSpeed()` sendet den herstellerspezifischen Befehl `0x99`:
+Die Funktion `setFanSpeed()` verwendet `W_CL_FANSPEED`. Vor jedem Schreibzugriff
+liest sie `R_CL_FANINFO1` bis `R_CL_FANINFO3`, ersetzt nur das niederwertige
+Byte für Lüfter 1 und übernimmt die aktuellen Rohwerte möglicher weiterer
+Lüfter unverändert in das gepackte 32-Bit-Argument. Damit verändert ein
+CPU-Profil keine unabhängigen GPU- oder Zusatzlüfter.
 
-```text
-Command-Port: 0x99
-Datenwert:    0x01    (Lüfter-/Kanal-ID)
-Datenwert:    speed   (Geschwindigkeit 0 bis 255)
-```
-
-Der Geschwindigkeitswert wird als Byte an den EC geschrieben:
+Der Geschwindigkeitswert für Lüfter 1 ist ein Byte:
 
 - `0`: theoretisch aus
 - `255`: maximale Geschwindigkeit
 - `0`: kleinster vom Programm verwendeter Wert; Profile dürfen den Lüfter damit
   unterhalb ihrer ersten aktiven Stufe abschalten
 
-Die genaue Bedeutung der EC-Befehle `0x99` und `0x9E` ist
-laptop- und firmwareabhängig.
+Der Kerneltreiber validiert Mindestwerte und übersetzt das IOCTL über seine
+aktive Clevo-ACPI/WMI-Schnittstelle in den hardwareabhängigen EC-Zugriff. Mit
+`W_CL_FANAUTO` kann die automatische Firmware-Regelung für alle drei Kanäle
+wieder aktiviert werden.
 
 ## TUXEDO-Control-Center-Referenzkurven
 
@@ -189,10 +180,9 @@ PWM = round(Prozent / 100 × 255)
 
 Der jeweilige Kernel-Treiber übersetzt diesen Wert weiter in das
 hardwareabhängige EC-Format. Deshalb lässt sich daraus ohne Messreihe keine
-allgemeingültige Prozent-zu-RPM-Kennlinie ableiten. Der EC-Befehl `0x99` dieses
-Projekts erwartet ebenfalls ein Byte von `0` bis `255`; ob dessen Skalierung
-mit der aktuellen TCC-`hwmon`-Skala identisch ist, muss jedoch für das konkrete
-Laptopmodell und dessen Firmware verifiziert werden.
+allgemeingültige Prozent-zu-RPM-Kennlinie ableiten. Die Clevo-IOCTL-Schnittstelle
+dieses Projekts erwartet ebenfalls ein Byte von `0` bis `255`; der
+TUXEDO-Kerneltreiber übernimmt die weitere hardwareabhängige Umrechnung.
 
 ### Profilauswahl und thermische Auswirkungen
 
@@ -229,28 +219,26 @@ Fehler und einer Diagnose. Die systemd-Unit startet ihn wegen
 
 Bei kontrolliertem Stop per Signal und nach wiederholt implausiblen
 Temperaturwerten versucht der Code, vor dem Beenden den höchsten von den
-Profilen verwendeten Sollwert `255` zu setzen. Nach direkten
-EC-Kommunikationsfehlern wird dagegen weiterhin keine zusätzliche
-Recovery-Transaktion erzwungen: Die vorliegenden Unterlagen garantieren nicht
-modell- und firmwareübergreifend, dass eine weitere, möglicherweise ebenfalls
-nur teilweise übertragene `0x99`-Transaktion einen sicheren Hardwarezustand
-herstellt. Die weitere Schutzwirkung der Firmware und der Hardware bleibt daher
-erforderlich.
+Profilen verwendeten Sollwert `255` für Lüfter 1 zu setzen. Die aktuellen Werte
+weiterer Lüfter werden dabei beibehalten. Nach IOCTL-Kommunikationsfehlern wird
+keine zusätzliche Recovery-Transaktion erzwungen; die weitere Schutzwirkung der
+Firmware und der Hardware bleibt erforderlich.
 
 ## Berechtigungen und Betriebsrisiken
 
-Der systemd-Dienst läuft als `root`, weil `ioperm()`, `inb()` und `outb()` für
-direkte I/O-Portzugriffe privilegierte Rechte benötigen. Die Unit begrenzt die
-verfügbaren Fähigkeiten auf `CAP_SYS_RAWIO`, reduziert die Priorität gegenüber
-der früheren Konfiguration und aktiviert mehrere systemd-Härtungen wie
-Dateisystemschutz, privates `/tmp`, eingeschränkte Address-Families und
-Start-Limits.
+Der systemd-Dienst läuft als `root`, weil `/dev/tuxedo_io` standardmäßig nur für
+privilegierte Prozesse zugänglich ist. Er benötigt jedoch keine Linux-
+Capabilities; insbesondere ist `CAP_SYS_RAWIO` aus der Bounding Set entfernt.
+`DevicePolicy=closed` und `DeviceAllow=/dev/tuxedo_io rw` begrenzen den
+Gerätezugriff auf die vorgesehene Kernel-API. Hinzu kommen Dateisystemschutz,
+privates `/tmp`, eingeschränkte Address-Families und Start-Limits.
 
-Die EC-Funktionen begrenzen ihre Wartevorgänge, pausieren zwischen Polls und
-propagieren Kommunikationsfehler bis in die Regelschleife. Erfolgreich gelesene
+Die IOCTL-Funktionen propagieren Kommunikationsfehler bis in die
+Regelschleife. Erfolgreich gelesene
 Temperaturbytes werden nur anhand allgemeiner Plausibilitätsgrenzen bewertet;
 es gibt weiterhin keine modellunabhängige Validierung der Sensoridentität und
 keinen dokumentierten separaten Notfallbefehl in der Software. Die Regelung ist
 daher von der EC-Implementierung und Firmware des jeweiligen Laptops abhängig.
-Eine falsche Port- oder Befehlsbelegung kann zu plausibel erscheinenden, aber
-fehlerhaften Temperaturwerten oder einer ungeeigneten Lüfteransteuerung führen.
+Eine unpassende Treiber-/Firmwarekombination kann weiterhin zu plausibel
+erscheinenden, aber fehlerhaften Temperaturwerten oder einer ungeeigneten
+Lüfteransteuerung führen.

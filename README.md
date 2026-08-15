@@ -48,9 +48,12 @@ unavailable even though the driver package is installed. Enroll the module
 signing key or disable Secure Boot according to the distribution's TUXEDO driver
 instructions before starting this fan-control service.
 
-The program accesses embedded-controller I/O ports and therefore must run as
-root. Incorrect use on unsupported hardware may cause ineffective cooling. Check
-service logs and temperatures after installation.
+The program opens `/dev/tuxedo_io` as root and uses the Clevo IOCTL interface;
+only the signed TUXEDO kernel modules access ACPI/WMI and the embedded
+controller. The daemon does not request raw-I/O capabilities and remains usable
+with Secure Boot kernel lockdown. Incorrect use on unsupported hardware may
+cause ineffective cooling. Check service logs and temperatures after
+installation.
 
 ## Quick start
 
@@ -121,8 +124,9 @@ sudo systemctl enable Tuxedo-Fan-Control.service
 ```
 
 CMake generates the unit with an `ExecStart` path matching the selected
-installation prefix. The unit runs as root with a reduced capability bounding set
-for raw I/O, filesystem protection, restart backoff, and start-rate limits.
+installation prefix. The unit runs as root without Linux capabilities, grants
+access only to `/dev/tuxedo_io`, and applies filesystem protection, restart
+backoff, and start-rate limits.
 
 ## Fan profiles
 
@@ -154,24 +158,23 @@ documented in [TECHNICAL_ANALYSIS.md](TECHNICAL_ANALYSIS.md).
 
 ## Failure handling
 
-EC buffer waits are bounded, briefly sleep between polls, and transaction
-failures are reported explicitly. The daemon skips fan control when a
-temperature read fails or the returned temperature is implausible. It exits with
-an error after three consecutive failed control cycles, and the supplied systemd
-unit then applies its rate-limited `Restart=on-failure` policy.
+Kernel-interface failures are reported explicitly. The daemon skips fan control
+when a temperature read fails or the returned temperature is implausible. It
+exits with an error after three consecutive failed control cycles, and the
+supplied systemd unit then applies its rate-limited `Restart=on-failure` policy.
 
 During a controlled shutdown or repeated implausible-temperature failure it
 attempts to set the fan to the maximum profile value before exiting. Because the
-available hardware documentation does not guarantee a model-independent emergency
-EC command, direct EC communication failures still stop the daemon without
-issuing a speculative recovery write.
+available hardware documentation does not guarantee a model-independent
+emergency recovery operation, kernel-interface failures still stop the daemon
+without issuing a speculative recovery write.
 
 ## Testing and quality checks
 
-The CTest suite checks the temperature and fan-speed boundary values as well as
-EC timeout, transaction-error propagation, valid zero-byte handling, and the
-consecutive-failure policy without accessing the laptop's EC. The tests must
-pass before an installation or release build.
+The CTest suite checks device and hardware detection, IOCTL temperature
+decoding, fan-speed boundary values, preservation of other fan channels,
+failure propagation, and the consecutive-failure policy without accessing
+laptop hardware. The tests must pass before an installation or release build.
 
 The project provides a Debian-based Docker image containing the C++ and Markdown
 quality tools. Build the image and run all checks with:
