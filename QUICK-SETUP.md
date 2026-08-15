@@ -6,7 +6,8 @@ Vor dem Start des Dienstes muss der passende TUXEDO-Kernel-Treiber installiert
 und geladen sein. Auf aktuellen Systemen ist das `tuxedo-drivers`, auf älteren
 Installationen `tuxedo-keyboard`. Prüfen, ob die benötigten Module sichtbar
 sind, insbesondere `tuxedo_keyboard` und, falls für das Gerät nötig,
-`tuxedo_io`:
+`tuxedo_io`. Der Dienst verwendet dessen `/dev/tuxedo_io`-Schnittstelle und
+keine direkten I/O-Portzugriffe:
 
 ```sh
 lsmod | grep -E 'tuxedo_keyboard|tuxedo_io|tuxedo'
@@ -14,8 +15,8 @@ lsmod | grep -E 'tuxedo_keyboard|tuxedo_io|tuxedo'
 
 Wenn Secure Boot unsignierte DKMS-Module blockiert, kann der EC-/Lüfterzugriff
 trotz installiertem Treiberpaket fehlen. Dann muss der Modul-Signaturschlüssel
-gemäß TUXEDO-/Distributionsanleitung eingeschrieben oder Secure Boot deaktiviert
-werden.
+gemäß TUXEDO-/Distributionsanleitung eingeschrieben werden. Mit signierten und
+vertrauenswürdigen Modulen ist der Dienst mit Secure-Boot-Lockdown kompatibel.
 
 Nach dem Herunterladen wird das Paket aus seinem Download-Verzeichnis
 installiert:

@@ -7,9 +7,10 @@ Tuxedo-Fan-Control \- EC-basierte Lüftersteuerung für Clevo-N151ZU-kompatible 
 .IR PROFILE ]
 .SH DESCRIPTION
 .B Tuxedo-Fan-Control
-läuft als Hintergrunddienst und liest die Temperatur direkt aus dem Embedded
-Controller (EC). Abhängig von der gemessenen Temperatur wird ein
-Duty-Cycle-Wert an den EC-Lüfterkanal geschrieben.
+läuft als Hintergrunddienst und liest die Temperatur über die
+.B /dev/tuxedo_io
+Schnittstelle des TUXEDO-Kerneltreibers. Abhängig von der gemessenen Temperatur
+wird ein Duty-Cycle-Wert über dieselbe Schnittstelle geschrieben.
 .PP
 Das Programm ist für den Betrieb durch die systemd-Unit
 .BR Tuxedo-Fan-Control.service (8)
@@ -33,18 +34,17 @@ Die fünf diskreten CPU-Kennlinien des TUXEDO Control Centers werden unterstütz
 Die Prozentwerte werden mit Rundung in den EC-Bereich 0 bis 255 umgerechnet.
 Die Kennlinien sind in der Projektdokumentation beschrieben.
 .SH HARDWARE ACCESS
-Der Dienst verwendet privilegierte x86-I/O-Portzugriffe auf den EC:
-.IP \(bu 2
-Command-Port: 0x66
-.IP \(bu 2
-Data-Port: 0x62
-.IP \(bu 2
-Temperaturbefehl: 0x9E, Index 1
-.IP \(bu 2
-Lüfterbefehl: 0x99, Kanal 0x01
-.PP
-Die Befehle und Datenformate sind laptopspezifisch. Das Programm darf nicht
-auf nicht unterstützter Hardware betrieben werden.
+Der Dienst verwendet die Clevo-IOCTLs
+.BR R_CL_FANINFO1 ,
+.BR W_CL_FANSPEED
+und
+.BR W_CL_FANAUTO .
+Nur der signierte TUXEDO-Kerneltreiber greift auf ACPI/WMI und den EC zu. Der
+Dienst benötigt weder direkte x86-I/O-Portzugriffe noch
+.BR CAP_SYS_RAWIO
+und ist deshalb mit Secure-Boot-Kernel-Lockdown kompatibel. Die Schnittstelle
+bleibt laptopspezifisch; das Programm darf nicht auf nicht unterstützter
+Hardware betrieben werden.
 .PP
 Der EC-/Lüfterzugriff setzt voraus, dass der passende TUXEDO-Kernel-Treiber
 installiert und geladen ist. Auf aktuellen Systemen stellt
@@ -56,11 +56,14 @@ Relevant sind insbesondere
 und, je nach Gerät,
 .BR tuxedo_io .
 Blockiert Secure Boot unsignierte DKMS-Module, kann die EC-Schnittstelle trotz
-installiertem Treiberpaket fehlen.
+installiertem Treiberpaket fehlen. Signierte Module und ein eingeschriebener
+Modulschlüssel ermöglichen den Betrieb unter Kernel-Lockdown.
 .SH SYSTEMD
 Die mitgelieferte Unit startet das Programm als Benutzer
 .BR root (8)
-mit begrenzten Raw-I/O-Rechten, systemd-Härtungen, Restart-Verzögerung und
+ohne Linux-Capabilities. Die Unit erlaubt nur den Zugriff auf
+.BR /dev/tuxedo_io
+und aktiviert weitere systemd-Härtungen, Restart-Verzögerung und
 Start-Limitierung. Die Unit wird nach
 .I /usr/lib/systemd/system/Tuxedo-Fan-Control.service
 installiert, wenn das Debian-Paket verwendet wird. Eine direkte lokale

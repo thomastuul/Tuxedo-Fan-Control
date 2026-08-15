@@ -1,24 +1,33 @@
 #include "ec_controller.h"
 
+#include <cerrno>
 #include <cstdlib>
-#include <thread>
-#include <utility>
+#include <fcntl.h>
+#include <sys/ioctl.h>
+#include <unistd.h>
 
 namespace {
 
-constexpr std::uint8_t OUTPUT_BUFFER_FULL = 0x01;
-constexpr std::uint8_t INPUT_BUFFER_FULL = 0x02;
-constexpr std::uint8_t FAN_COMMAND = 0x99;
-constexpr std::uint8_t FAN_ID = 0x01;
-constexpr std::uint8_t TEMP_COMMAND = 0x9E;
-constexpr std::uint8_t TEMP_INDEX = 0x01;
+// ABI constants from tuxedo-drivers 4.22.3, tuxedo_io_ioctl.h. The request
+// layout is also consumed by TUXEDO Control Center 3.0.9.
+constexpr unsigned IOCTL_MAGIC = 0xEC;
+constexpr unsigned MAGIC_READ_CLEVO = IOCTL_MAGIC + 1;
+constexpr unsigned MAGIC_WRITE_CLEVO = IOCTL_MAGIC + 2;
+
+constexpr unsigned long R_HWCHECK_CL = _IOR(IOCTL_MAGIC, 0x05, std::int32_t *);
+constexpr unsigned long R_CL_FANINFO[] = {
+    _IOR(MAGIC_READ_CLEVO, 0x10, std::int32_t *),
+    _IOR(MAGIC_READ_CLEVO, 0x11, std::int32_t *),
+    _IOR(MAGIC_READ_CLEVO, 0x12, std::int32_t *)};
+constexpr unsigned long W_CL_FANSPEED =
+    _IOW(MAGIC_WRITE_CLEVO, 0x10, std::int32_t *);
+constexpr unsigned long W_CL_FANAUTO =
+    _IOW(MAGIC_WRITE_CLEVO, 0x11, std::int32_t *);
+
 constexpr std::uint8_t MIN_PLAUSIBLE_TEMPERATURE = 10;
 constexpr std::uint8_t MAX_PLAUSIBLE_TEMPERATURE = 110;
 constexpr int MAX_PLAUSIBLE_TEMPERATURE_STEP = 30;
-
-void defaultPollWait() {
-  std::this_thread::sleep_for(EC_POLL_INTERVAL);
-}
+constexpr unsigned TEMPERATURE_SHIFT = 16;
 
 } // namespace
 
@@ -26,112 +35,119 @@ const char *ecStatusMessage(EcStatus status) {
   switch (status) {
   case EcStatus::Success:
     return "success";
-  case EcStatus::FlushTimeout:
-    return "timed out while flushing EC output";
-  case EcStatus::InputBufferTimeout:
-    return "timed out waiting for EC input buffer";
-  case EcStatus::OutputBufferTimeout:
-    return "timed out waiting for EC output data";
+  case EcStatus::DeviceUnavailable:
+    return "tuxedo_io device is unavailable";
+  case EcStatus::UnsupportedHardware:
+    return "tuxedo_io did not identify a supported Clevo interface";
+  case EcStatus::ReadFailed:
+    return "tuxedo_io fan information read failed";
+  case EcStatus::WriteFailed:
+    return "tuxedo_io fan control write failed";
   }
 
   return "unknown EC error";
 }
 
-EcController::EcController(EcPortIo &portIo,
-                           Clock::duration waitTimeout,
-                           NowFunction nowFunction,
-                           PollWaitFunction pollWaitFunction)
-    : portIo(portIo), waitTimeout(waitTimeout), now(std::move(nowFunction)),
-      pollWait(std::move(pollWaitFunction)) {
-  if (!pollWait) {
-    pollWait = defaultPollWait;
+SystemTuxedoIoTransport::SystemTuxedoIoTransport(const char *devicePath)
+    : fileDescriptor(open(devicePath, O_RDWR | O_CLOEXEC)) {
+}
+
+SystemTuxedoIoTransport::~SystemTuxedoIoTransport() {
+  if (fileDescriptor >= 0) {
+    close(fileDescriptor);
   }
 }
 
-EcStatus EcController::flush() {
-  const Clock::time_point DEADLINE = now() + waitTimeout;
-  do {
-    if ((portIo.readPort(EC_COMMAND_PORT) & OUTPUT_BUFFER_FULL) == 0) {
-      return EcStatus::Success;
-    }
-    portIo.readPort(EC_DATA_PORT);
-    pollWait();
-  } while (now() < DEADLINE);
-
-  return EcStatus::FlushTimeout;
+bool SystemTuxedoIoTransport::available() const {
+  return fileDescriptor >= 0;
 }
 
-EcStatus EcController::waitForInputBuffer() {
-  const Clock::time_point DEADLINE = now() + waitTimeout;
-  do {
-    if ((portIo.readPort(EC_COMMAND_PORT) & INPUT_BUFFER_FULL) == 0) {
-      return EcStatus::Success;
-    }
-    pollWait();
-  } while (now() < DEADLINE);
-
-  return EcStatus::InputBufferTimeout;
+bool SystemTuxedoIoTransport::call(unsigned long request,
+                                   std::int32_t &argument) {
+  if (!available()) {
+    errno = ENODEV;
+    return false;
+  }
+  return ioctl(fileDescriptor, request, &argument) >= 0;
 }
 
-EcStatus EcController::sendCommand(std::uint8_t command) {
-  const EcStatus STATUS = waitForInputBuffer();
-  if (STATUS != EcStatus::Success) {
-    return STATUS;
+EcController::EcController(TuxedoIoTransport &transport)
+    : transport(transport) {
+}
+
+EcStatus EcController::initialize() {
+  if (!transport.available()) {
+    return EcStatus::DeviceUnavailable;
   }
 
-  portIo.writePort(command, EC_COMMAND_PORT);
+  std::int32_t identified = 0;
+  if (!transport.call(R_HWCHECK_CL, identified)) {
+    return EcStatus::ReadFailed;
+  }
+  if (identified != 1) {
+    return EcStatus::UnsupportedHardware;
+  }
+
+  initialized = true;
   return EcStatus::Success;
 }
 
-EcStatus EcController::writeData(std::uint8_t data) {
-  const EcStatus STATUS = waitForInputBuffer();
-  if (STATUS != EcStatus::Success) {
-    return STATUS;
+EcStatus EcController::readFanInfo(unsigned fanIndex, std::uint32_t &fanInfo) {
+  if (!initialized || fanIndex >= CLEVO_FAN_COUNT) {
+    return EcStatus::ReadFailed;
   }
 
-  portIo.writePort(data, EC_DATA_PORT);
+  std::int32_t result = 0;
+  if (!transport.call(R_CL_FANINFO[fanIndex], result)) {
+    return EcStatus::ReadFailed;
+  }
+  fanInfo = static_cast<std::uint32_t>(result);
   return EcStatus::Success;
-}
-
-EcStatus EcController::readByte(std::uint8_t &value) {
-  const Clock::time_point DEADLINE = now() + waitTimeout;
-  do {
-    if ((portIo.readPort(EC_COMMAND_PORT) & OUTPUT_BUFFER_FULL) != 0) {
-      value = portIo.readPort(EC_DATA_PORT);
-      return EcStatus::Success;
-    }
-    pollWait();
-  } while (now() < DEADLINE);
-
-  return EcStatus::OutputBufferTimeout;
-}
-
-EcStatus EcController::setFanSpeed(std::uint8_t speed) {
-  EcStatus status = sendCommand(FAN_COMMAND);
-  if (status != EcStatus::Success) {
-    return status;
-  }
-  status = writeData(FAN_ID);
-  if (status != EcStatus::Success) {
-    return status;
-  }
-  return writeData(speed);
 }
 
 EcStatus EcController::getLocalTemp(std::uint8_t &temperature) {
-  EcStatus status = flush();
-  if (status != EcStatus::Success) {
-    return status;
+  std::uint32_t fanInfo = 0;
+  const EcStatus STATUS = readFanInfo(0, fanInfo);
+  if (STATUS != EcStatus::Success) {
+    return STATUS;
   }
-  status = sendCommand(TEMP_COMMAND);
-  if (status != EcStatus::Success) {
-    return status;
+
+  temperature =
+      static_cast<std::uint8_t>((fanInfo >> TEMPERATURE_SHIFT) & 0xff);
+  return EcStatus::Success;
+}
+
+EcStatus EcController::setFanSpeed(std::uint8_t speed) {
+  std::uint32_t fanInfo[CLEVO_FAN_COUNT] = {};
+  for (unsigned fanIndex = 0; fanIndex < CLEVO_FAN_COUNT; ++fanIndex) {
+    const EcStatus STATUS = readFanInfo(fanIndex, fanInfo[fanIndex]);
+    if (STATUS != EcStatus::Success) {
+      return STATUS;
+    }
   }
-  status = writeData(TEMP_INDEX);
-  if (status != EcStatus::Success) {
-    return status;
+
+  std::uint32_t packedSpeeds = speed;
+  for (unsigned fanIndex = 1; fanIndex < CLEVO_FAN_COUNT; ++fanIndex) {
+    packedSpeeds |= (fanInfo[fanIndex] & 0xff) << (fanIndex * 8);
   }
-  return readByte(temperature);
+
+  std::int32_t argument = static_cast<std::int32_t>(packedSpeeds);
+  if (!transport.call(W_CL_FANSPEED, argument)) {
+    return EcStatus::WriteFailed;
+  }
+  return EcStatus::Success;
+}
+
+EcStatus EcController::setFansAuto() {
+  if (!initialized) {
+    return EcStatus::WriteFailed;
+  }
+
+  std::int32_t argument = 0x0f;
+  if (!transport.call(W_CL_FANAUTO, argument)) {
+    return EcStatus::WriteFailed;
+  }
+  return EcStatus::Success;
 }
 
 bool ecFailureLimitReached(unsigned &consecutiveFailures) {

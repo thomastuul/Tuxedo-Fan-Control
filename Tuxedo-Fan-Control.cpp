@@ -5,7 +5,6 @@
 #include <cstdlib>
 #include <cstring>
 #include <iostream>
-#include <sys/io.h>
 #include <unistd.h>
 
 #include "ec_controller.h"
@@ -19,30 +18,6 @@ volatile std::sig_atomic_t stopRequested = 0;
 static void requestStop(int /*signal*/) {
   stopRequested = 1;
 }
-
-static bool ecInit() {
-  if (ioperm(EC_DATA_PORT, 1, 1) != 0) {
-    return false;
-  }
-
-  if (ioperm(EC_COMMAND_PORT, 1, 1) != 0) {
-    ioperm(EC_DATA_PORT, 1, 0);
-    return false;
-  }
-
-  return true;
-}
-
-class SystemEcPortIo : public EcPortIo {
-public:
-  std::uint8_t readPort(unsigned port) override {
-    return inb(port);
-  }
-
-  void writePort(std::uint8_t value, unsigned port) override {
-    outb(value, port);
-  }
-};
 
 static std::uint64_t nowMilliseconds() {
   const auto NOW = std::chrono::steady_clock::now();
@@ -87,8 +62,12 @@ int main(int argc, const char *argv[]) {
   const FanProfile PROFILE = fanProfileFromCommandLine(argc, argv);
   std::clog << "Using fan profile: " << fanProfileName(PROFILE) << '\n';
 
-  if (!ecInit()) {
-    std::cerr << "Unable to access the embedded controller I/O ports\n";
+  SystemTuxedoIoTransport transport;
+  EcController ec(transport);
+  const EcStatus INIT_STATUS = ec.initialize();
+  if (INIT_STATUS != EcStatus::Success) {
+    std::cerr << "Unable to initialize the TUXEDO kernel interface: "
+              << ecStatusMessage(INIT_STATUS) << '\n';
     return EXIT_FAILURE;
   }
 
@@ -97,9 +76,6 @@ int main(int argc, const char *argv[]) {
   unsigned consecutiveEcFailures = 0;
   bool hasPreviousTemperature = false;
   std::uint8_t previousTemperature = 0;
-  SystemEcPortIo portIo;
-  EcController ec(portIo);
-
   while (stopRequested == 0) {
     const std::uint64_t NOW = nowMilliseconds();
     std::uint8_t temperature = 0;

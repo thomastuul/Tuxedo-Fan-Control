@@ -3,10 +3,11 @@
 ## Projektcharakter
 
 - Tuxedo-Fan-Control ist ein nativer Linux-Dienst zur Lüftersteuerung.
-- Das Programm kommuniziert direkt mit dem Embedded Controller (EC) des
-  Laptops über privilegierte I/O-Portzugriffe. Änderungen an EC-Ports,
-  Befehlen oder Datenformaten sind hardware- und firmwareabhängig und müssen
-  besonders sorgfältig geprüft werden.
+- Das Programm kommuniziert über `/dev/tuxedo_io` und die Clevo-IOCTL-API mit
+  dem signierten TUXEDO-Kerneltreiber. Nur der Treiber greift direkt auf den
+  Embedded Controller (EC) zu. Änderungen an IOCTLs, EC-Befehlen oder
+  Datenformaten sind hardware- und firmwareabhängig und müssen besonders
+  sorgfältig geprüft werden.
 - Die Software läuft als Hintergrunddienst.
 
 ## Build und Tests
@@ -49,9 +50,11 @@
   Änderungen an Binary-Pfad, Unit-Namen, Benutzer, Restart-Verhalten oder
   Priorität müssen in `Tuxedo-Fan-Control.service`, `makefile` und der
   Dokumentation konsistent bleiben.
-- Der Dienst läuft als `root`, da `ioperm()`, `inb()` und `outb()` privilegierte
-  Hardwarezugriffe benötigen. Eine Umstellung auf einen anderen Benutzer ist
-  erst nach einer technischen Prüfung der erforderlichen Rechte zulässig.
+- Der Dienst läuft als `root`, da `/dev/tuxedo_io` standardmäßig nur für
+  privilegierte Prozesse zugänglich ist. Er benötigt keine direkten
+  I/O-Portzugriffe und kein `CAP_SYS_RAWIO`. Eine Umstellung auf einen anderen
+  Benutzer ist erst nach einer technischen Prüfung der Geräteberechtigungen
+  zulässig.
 - Änderungen an Lüfterkurve, Mindestgeschwindigkeit, Temperaturgrenzen oder
   EC-Befehlen müssen ihre thermischen Auswirkungen dokumentieren.
 - Ein Service-Neustart oder eine Änderung der aktiven Lüftersteuerung ist eine
