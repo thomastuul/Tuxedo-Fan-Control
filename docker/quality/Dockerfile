@@ -9,9 +9,11 @@ RUN apt-get update \
         clang-tidy \
         cmake \
         g++ \
+        libsystemd-dev \
         make \
         nodejs \
         npm \
+        pkg-config \
     && npm install --global --no-audit --no-fund \
         markdownlint-cli2@0.17.2 \
         prettier \

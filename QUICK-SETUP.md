@@ -25,6 +25,13 @@ installiert:
 sudo apt install ./tuxedo-fan-control_*.deb
 ```
 
+Eine frühere direkte CMake-/Make-Installation muss zuvor mit
+`sudo make uninstall` aus ihrem damaligen Quellverzeichnis entfernt werden.
+Insbesondere würde eine verbliebene Unit unter `/etc/systemd/system` die
+paketverwaltete Unit unter `/usr/lib/systemd/system` übersteuern. Nach der
+Paketinstallation muss `systemctl show -p FragmentPath
+Tuxedo-Fan-Control.service` auf die Unit unter `/usr/lib/systemd/system` zeigen.
+
 Das gewünschte Profil (`silent`, `quiet`, `balanced`, `cool` oder `freezy`)
 wird über `/etc/default/tuxedo-fan-control` eingestellt:
 
@@ -46,7 +53,9 @@ Status, installierte Version und tatsächlich geladenes Profil kontrollieren:
 ```sh
 dpkg-query -W tuxedo-fan-control
 systemctl status Tuxedo-Fan-Control.service
+systemctl show -p FragmentPath Tuxedo-Fan-Control.service
 journalctl -u Tuxedo-Fan-Control.service -n 20 --no-pager
 ```
 
-Im Journal muss beispielsweise `Using fan profile: quiet` erscheinen.
+Im Journal müssen beispielsweise `Using fan profile: quiet` sowie regelmäßige
+Zeilen mit Temperatur, angefordertem und zurückgelesenem Lüfterwert erscheinen.

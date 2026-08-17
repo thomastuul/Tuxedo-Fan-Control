@@ -17,6 +17,10 @@ ExecStart=@CMAKE_INSTALL_FULL_BINDIR@/Tuxedo-Fan-Control --profile ${TUXEDO_FAN_
  
 Restart=on-failure
 RestartSec=5s
+WatchdogSec=5s
+TimeoutAbortSec=5s
+TimeoutStopSec=5s
+NotifyAccess=main
 Nice=-5
 NoNewPrivileges=true
 CapabilityBoundingSet=

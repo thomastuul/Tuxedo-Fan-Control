@@ -9,7 +9,9 @@ RUN apt-get update \
         dpkg-dev \
         file \
         g++ \
+        libsystemd-dev \
         ninja-build \
+        pkg-config \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
 

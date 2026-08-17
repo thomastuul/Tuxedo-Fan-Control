@@ -62,6 +62,10 @@ void expectStatus(const char *name, EcStatus expected, EcStatus actual) {
   expectEqual(name, static_cast<int>(expected), static_cast<int>(actual));
 }
 
+std::int32_t fanInfo(int temperature, int speed) {
+  return static_cast<std::int32_t>((temperature << 16) | speed);
+}
+
 void testInitialization() {
   FakeTuxedoIoTransport unavailable;
   unavailable.deviceAvailable = false;
@@ -120,19 +124,26 @@ void testFanSpeedBoundariesAndPacking() {
   for (const int SPEED : {0, 255}) {
     FakeTuxedoIoTransport io;
     io.results = {{true, 1},
-                  {true, 0x003c0064},
+                  {true, fanInfo(60, 100)},
                   {true, 0x00000022},
                   {true, 0x00000033},
-                  {true, 0}};
+                  {true, 0},
+                  {true, fanInfo(60, normalizeClevoFanSpeed(SPEED))}};
     EcController ec(io);
     expectStatus("fan boundary init", EcStatus::Success, ec.initialize());
-    expectStatus("fan boundary write",
-                 EcStatus::Success,
-                 ec.setFanSpeed(static_cast<std::uint8_t>(SPEED)));
+    std::uint8_t observedSpeed = 99;
+    expectStatus(
+        "fan boundary write",
+        EcStatus::Success,
+        ec.setFanSpeed(static_cast<std::uint8_t>(SPEED), &observedSpeed));
     expectEqual(
-        "fan boundary call count", 5, static_cast<int>(io.calls.size()));
-    expectEqual(
-        "fan zero boundary packed", SPEED | 0x00332200, io.calls.back().second);
+        "fan boundary call count", 6, static_cast<int>(io.calls.size()));
+    expectEqual("fan boundary packed",
+                SPEED | 0x00332200,
+                io.calls[io.calls.size() - 2].second);
+    expectEqual("fan boundary observed speed",
+                normalizeClevoFanSpeed(SPEED),
+                observedSpeed);
   }
 }
 
@@ -160,6 +171,67 @@ void testFanWriteFailurePropagation() {
   expectStatus("fan write failure",
                EcStatus::WriteFailed,
                writeFailureEc.setFanSpeed(128));
+}
+
+void testFanSpeedVerification() {
+  FakeTuxedoIoTransport mismatch;
+  mismatch.results = {{true, 1},
+                      {true, fanInfo(40, 255)},
+                      {true, 0},
+                      {true, 0},
+                      {true, 0},
+                      {true, fanInfo(40, 255)}};
+  EcController mismatchEc(mismatch);
+  expectStatus("mismatch init", EcStatus::Success, mismatchEc.initialize());
+  std::uint8_t observedSpeed = 0;
+  expectStatus("unapplied fan speed",
+               EcStatus::FanSpeedMismatch,
+               mismatchEc.setFanSpeed(0, &observedSpeed));
+  expectEqual("mismatch reports observed speed", 255, observedSpeed);
+
+  FakeTuxedoIoTransport verificationFailure;
+  verificationFailure.results = {{true, 1},
+                                 {true, fanInfo(40, 255)},
+                                 {true, 0},
+                                 {true, 0},
+                                 {true, 0},
+                                 {false, 0}};
+  EcController verificationFailureEc(verificationFailure);
+  expectStatus("verification failure init",
+               EcStatus::Success,
+               verificationFailureEc.initialize());
+  expectStatus("verification read failure",
+               EcStatus::ReadFailed,
+               verificationFailureEc.setFanSpeed(0));
+
+  FakeTuxedoIoTransport maskedDriverFailure;
+  maskedDriverFailure.results = {{true, 1},
+                                 {true, fanInfo(40, 255)},
+                                 {true, 0},
+                                 {true, 0},
+                                 {true, 0},
+                                 {true, 0}};
+  EcController maskedDriverFailureEc(maskedDriverFailure);
+  expectStatus("masked driver failure init",
+               EcStatus::Success,
+               maskedDriverFailureEc.initialize());
+  expectStatus("zeroed fan info is not accepted as verification",
+               EcStatus::ReadFailed,
+               maskedDriverFailureEc.setFanSpeed(0));
+}
+
+void testClevoFanSpeedNormalization() {
+  expectEqual("zero remains off", 0, normalizeClevoFanSpeed(0));
+  expectEqual("last off value remains off", 0, normalizeClevoFanSpeed(30));
+  expectEqual("first rounded value uses hardware minimum",
+              63,
+              normalizeClevoFanSpeed(31));
+  expectEqual("last rounded value uses hardware minimum",
+              63,
+              normalizeClevoFanSpeed(62));
+  expectEqual(
+      "hardware minimum remains unchanged", 63, normalizeClevoFanSpeed(63));
+  expectEqual("maximum remains unchanged", 255, normalizeClevoFanSpeed(255));
 }
 
 void testAutomaticMode() {
@@ -221,6 +293,8 @@ int runEcControllerTests() {
   testTemperatureRead();
   testFanSpeedBoundariesAndPacking();
   testFanWriteFailurePropagation();
+  testFanSpeedVerification();
+  testClevoFanSpeedNormalization();
   testAutomaticMode();
   testConsecutiveFailurePolicy();
   testTemperaturePlausibilityPolicy();

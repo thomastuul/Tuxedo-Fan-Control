@@ -35,3 +35,4 @@ uninstall:
 	-systemctl disable Tuxedo-Fan-Control.service
 	-rm /etc/systemd/system/Tuxedo-Fan-Control.service
 	-rm /usr/local/bin/Tuxedo-Fan-Control
+	-systemctl daemon-reload

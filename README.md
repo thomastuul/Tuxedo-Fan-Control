@@ -95,7 +95,7 @@ The journal should contain a message such as `Using fan profile: quiet`.
 ### Build and test from source
 
 ```sh
-sudo apt install -y g++ make cmake
+sudo apt install -y g++ make cmake pkg-config libsystemd-dev
 make configure
 make compile
 ctest --test-dir build --output-on-failure
@@ -126,7 +126,7 @@ sudo systemctl enable Tuxedo-Fan-Control.service
 CMake generates the unit with an `ExecStart` path matching the selected
 installation prefix. The unit runs as root without Linux capabilities, grants
 access only to `/dev/tuxedo_io`, and applies filesystem protection, restart
-backoff, and start-rate limits.
+backoff, a service watchdog, and start-rate limits.
 
 ## Fan profiles
 
@@ -163,18 +163,31 @@ when a temperature read fails or the returned temperature is implausible. It
 exits with an error after three consecutive failed control cycles, and the
 supplied systemd unit then applies its rate-limited `Restart=on-failure` policy.
 
-During a controlled shutdown or repeated implausible-temperature failure it
-attempts to set the fan to the maximum profile value before exiting. Because the
-available hardware documentation does not guarantee a model-independent
-emergency recovery operation, kernel-interface failures still stop the daemon
-without issuing a speculative recovery write.
+Every fan-speed write is followed by a fan-information readback. A write is
+accepted only when the returned temperature is basically plausible and the
+observed speed matches the value after the kernel driver's documented minimum-
+speed normalization. This detects IOCTLs that report success even though the EC
+did not apply the requested value. The service logs temperature, requested
+speed, and observed speed every 30 seconds.
+
+The systemd unit also supervises completed control cycles with a five-second
+service watchdog. A stalled userspace control loop is aborted and restarted;
+an uninterruptibly blocked kernel operation can still require driver, firmware,
+or system recovery.
+
+During a controlled shutdown and before exiting after repeated control failures,
+the daemon asks the documented `W_CL_FANAUTO` interface to restore automatic
+firmware fan control. It requests maximum speed as a thermal fallback only when
+that recovery IOCTL reports an error.
 
 ## Testing and quality checks
 
 The CTest suite checks device and hardware detection, IOCTL temperature
 decoding, fan-speed boundary values, preservation of other fan channels,
-failure propagation, and the consecutive-failure policy without accessing
-laptop hardware. The tests must pass before an installation or release build.
+kernel minimum-speed normalization, readback mismatch detection, masked driver
+failures, failure propagation, and the consecutive-failure policy without
+accessing laptop hardware. The tests must pass before an installation or release
+build.
 
 The project provides a Debian-based Docker image containing the C++ and Markdown
 quality tools. Build the image and run all checks with:
@@ -212,9 +225,10 @@ The generated `.deb` file and its SHA-256 checksum are written to
 `package-output/`. The package installs the executable below `/usr/bin`, the
 systemd unit below `/usr/lib/systemd/system`, the administrator manpage and the
 project documentation. Installing the package does not automatically enable or
-start the hardware-specific service. The package declares `systemd` and generated
-shared-library dependencies such as `libc6`, `libgcc-s1`, and `libstdc++6`; it
-does not install the hardware-specific TUXEDO kernel drivers.
+start the hardware-specific service. The package declares `systemd` and
+generated shared-library dependencies such as `libc6`, `libgcc-s1`,
+`libstdc++6`, and `libsystemd0`; it does not install the hardware-specific
+TUXEDO kernel drivers.
 
 The GitHub Actions workflow `Debian package` performs the same containerized
 build for pull requests and pushes to `master`, for tags beginning with `v`, and

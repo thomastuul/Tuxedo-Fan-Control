@@ -5,6 +5,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <iostream>
+#include <systemd/sd-daemon.h>
 #include <unistd.h>
 
 #include "ec_controller.h"
@@ -12,6 +13,7 @@
 
 constexpr unsigned REFRESH_RATE_MS = 250;
 constexpr unsigned MAX_FAN_SET_INTERVAL_MS = 2000;
+constexpr unsigned STATUS_LOG_INTERVAL_MS = 30000;
 
 volatile std::sig_atomic_t stopRequested = 0;
 
@@ -54,6 +56,18 @@ static void setFailsafeFanSpeed(EcController &ec) {
             << ecStatusMessage(STATUS) << '\n';
 }
 
+static void restoreAutomaticFanControl(EcController &ec) {
+  const EcStatus STATUS = ec.setFansAuto();
+  if (STATUS == EcStatus::Success) {
+    std::clog << "Restored automatic firmware fan control before stopping\n";
+    return;
+  }
+
+  std::cerr << "Unable to restore automatic firmware fan control: "
+            << ecStatusMessage(STATUS) << '\n';
+  setFailsafeFanSpeed(ec);
+}
+
 int main(int argc, const char *argv[]) {
   std::signal(SIGINT, requestStop);
   std::signal(SIGTERM, requestStop);
@@ -71,11 +85,24 @@ int main(int argc, const char *argv[]) {
     return EXIT_FAILURE;
   }
 
+  std::uint64_t watchdogTimeoutMicroseconds = 0;
+  const int WATCHDOG_STATUS =
+      sd_watchdog_enabled(0, &watchdogTimeoutMicroseconds);
+  const bool WATCHDOG_ENABLED = WATCHDOG_STATUS > 0;
+  if (WATCHDOG_STATUS < 0) {
+    std::cerr << "Unable to query the systemd watchdog configuration\n";
+  } else if (WATCHDOG_ENABLED) {
+    std::clog << "Systemd watchdog enabled with " << watchdogTimeoutMicroseconds
+              << " microseconds timeout\n";
+  }
+
   int lastFanSpeed = -1;
   std::uint64_t lastTimeFanUpdate = 0;
   unsigned consecutiveEcFailures = 0;
   bool hasPreviousTemperature = false;
   std::uint8_t previousTemperature = 0;
+  int lastObservedFanSpeed = -1;
+  std::uint64_t lastStatusLog = 0;
   while (stopRequested == 0) {
     const std::uint64_t NOW = nowMilliseconds();
     std::uint8_t temperature = 0;
@@ -84,8 +111,8 @@ int main(int argc, const char *argv[]) {
       std::cerr << "EC temperature read failed: " << ecStatusMessage(status)
                 << '\n';
       if (ecFailureLimitReached(consecutiveEcFailures)) {
-        std::cerr << "Too many consecutive EC failures; stopping fan control "
-                     "without issuing an undocumented recovery command\n";
+        std::cerr << "Too many consecutive EC failures; stopping fan control\n";
+        restoreAutomaticFanControl(ec);
         return EXIT_FAILURE;
       }
       usleep(REFRESH_RATE_MS * 1000);
@@ -99,7 +126,7 @@ int main(int argc, const char *argv[]) {
       if (ecFailureLimitReached(consecutiveEcFailures)) {
         std::cerr << "Too many consecutive implausible EC temperatures; "
                      "stopping fan control\n";
-        setFailsafeFanSpeed(ec);
+        restoreAutomaticFanControl(ec);
         return EXIT_FAILURE;
       }
       usleep(REFRESH_RATE_MS * 1000);
@@ -111,19 +138,23 @@ int main(int argc, const char *argv[]) {
 
     if (lastFanSpeed != DYNAMIC_FAN_SPEED ||
         NOW > lastTimeFanUpdate + MAX_FAN_SET_INTERVAL_MS) {
+      std::uint8_t observedFanSpeed = 0;
       status = ec.setFanSpeed(
-          static_cast<std::uint8_t>(clampFanSpeed(DYNAMIC_FAN_SPEED)));
+          static_cast<std::uint8_t>(clampFanSpeed(DYNAMIC_FAN_SPEED)),
+          &observedFanSpeed);
       if (status != EcStatus::Success) {
         std::cerr << "EC fan write failed: " << ecStatusMessage(status) << '\n';
         if (ecFailureLimitReached(consecutiveEcFailures)) {
-          std::cerr << "Too many consecutive EC failures; stopping fan control "
-                       "without issuing an undocumented recovery command\n";
+          std::cerr
+              << "Too many consecutive EC failures; stopping fan control\n";
+          restoreAutomaticFanControl(ec);
           return EXIT_FAILURE;
         }
         usleep(REFRESH_RATE_MS * 1000);
         continue;
       }
       lastTimeFanUpdate = NOW;
+      lastObservedFanSpeed = observedFanSpeed;
 #ifdef VERBOSE
       std::cout << "T:" << TEMP << "°C | set fan to "
                 << std::round(static_cast<float>(DYNAMIC_FAN_SPEED) /
@@ -133,10 +164,25 @@ int main(int argc, const char *argv[]) {
     }
     resetEcFailures(consecutiveEcFailures);
     lastFanSpeed = DYNAMIC_FAN_SPEED;
+    if (lastStatusLog == 0 || NOW > lastStatusLog + STATUS_LOG_INTERVAL_MS) {
+      std::clog << "T:" << TEMP << "°C | requested fan " << DYNAMIC_FAN_SPEED
+                << " | observed fan " << lastObservedFanSpeed << '\n';
+      if (WATCHDOG_ENABLED) {
+        sd_notifyf(0,
+                   "WATCHDOG=1\nSTATUS=EC temperature %d C, fan requested %d, "
+                   "observed %d",
+                   TEMP,
+                   DYNAMIC_FAN_SPEED,
+                   lastObservedFanSpeed);
+      }
+      lastStatusLog = NOW;
+    } else if (WATCHDOG_ENABLED) {
+      sd_notify(0, "WATCHDOG=1");
+    }
     usleep(REFRESH_RATE_MS * 1000);
   }
 
-  std::clog << "Stop requested; leaving fan at maximum speed\n";
-  setFailsafeFanSpeed(ec);
+  std::clog << "Stop requested\n";
+  restoreAutomaticFanControl(ec);
   return EXIT_SUCCESS;
 }

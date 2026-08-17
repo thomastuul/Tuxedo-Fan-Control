@@ -3,6 +3,8 @@ cmake_minimum_required(VERSION 3.16)
 project(Tuxedo-Fan-Control LANGUAGES CXX)
 
 include(GNUInstallDirs)
+find_package(PkgConfig REQUIRED)
+pkg_check_modules(SYSTEMD REQUIRED IMPORTED_TARGET libsystemd)
 
 set(TUXEDO_FAN_CONTROL_VERSION "0.0.0+local" CACHE STRING
     "Version used for generated packages")
@@ -29,7 +31,11 @@ target_include_directories(ec_controller_logic PUBLIC ${CMAKE_CURRENT_SOURCE_DIR
 target_compile_features(ec_controller_logic PUBLIC cxx_std_11)
 
 add_executable(Tuxedo-Fan-Control Tuxedo-Fan-Control.cpp)
-target_link_libraries(Tuxedo-Fan-Control PRIVATE fan_curve_logic ec_controller_logic)
+target_link_libraries(Tuxedo-Fan-Control PRIVATE
+    fan_curve_logic
+    ec_controller_logic
+    PkgConfig::SYSTEMD
+)
 
 target_compile_features(Tuxedo-Fan-Control PRIVATE cxx_std_11)
 

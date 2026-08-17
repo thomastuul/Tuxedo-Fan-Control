@@ -1,4 +1,4 @@
-.TH TUXEDO-FAN-CONTROL 8 "8 August 2026" "Tuxedo-Fan-Control" "System Manager's Manual"
+.TH TUXEDO-FAN-CONTROL 8 "17 August 2026" "Tuxedo-Fan-Control" "System Manager's Manual"
 .SH NAME
 Tuxedo-Fan-Control \- EC-basierte Lüftersteuerung für Clevo-N151ZU-kompatible Laptops
 .SH SYNOPSIS
@@ -33,6 +33,11 @@ Fehlkonfiguration weiterläuft.
 Die fünf diskreten CPU-Kennlinien des TUXEDO Control Centers werden unterstützt.
 Die Prozentwerte werden mit Rundung in den EC-Bereich 0 bis 255 umgerechnet.
 Die Kennlinien sind in der Projektdokumentation beschrieben.
+.PP
+Nach jedem Lüfterbefehl liest der Dienst den angewendeten Wert zurück. Eine
+Abweichung vom durch den Kerneltreiber normalisierten Sollwert wird als
+Regelungsfehler behandelt. Temperatur, Sollwert und Rücklesewert werden in
+regelmäßigen Abständen protokolliert.
 .SH HARDWARE ACCESS
 Der Dienst verwendet die Clevo-IOCTLs
 .BR R_CL_FANINFO1 ,
@@ -63,8 +68,11 @@ Die mitgelieferte Unit startet das Programm als Benutzer
 .BR root (8)
 ohne Linux-Capabilities. Die Unit erlaubt nur den Zugriff auf
 .BR /dev/tuxedo_io
-und aktiviert weitere systemd-Härtungen, Restart-Verzögerung und
-Start-Limitierung. Die Unit wird nach
+und aktiviert weitere systemd-Härtungen, Restart-Verzögerung, einen
+Service-Watchdog und Start-Limitierung. Bleibt der Regelzyklus länger als fünf
+Sekunden hängen, beendet systemd den Prozess und startet ihn neu. Ein im Kernel
+ununterbrechbar blockierter Hardwarezugriff kann dennoch eine Treiber-,
+Firmware- oder Systemwiederherstellung erfordern. Die Unit wird nach
 .I /usr/lib/systemd/system/Tuxedo-Fan-Control.service
 installiert, wenn das Debian-Paket verwendet wird. Eine direkte lokale
 CMake-Installation verwendet standardmäßig
@@ -76,6 +84,12 @@ mit einer Zeile wie
 gewählt. Fehlt die Datei oder enthält sie einen ungültigen Profilnamen, wird
 .B balanced
 verwendet.
+.PP
+Bei kontrolliertem Stop und nach wiederholten Regelungsfehlern fordert der
+Dienst über
+.B W_CL_FANAUTO
+die automatische Firmware-Regelung an. Meldet dieser Befehl einen Fehler, wird
+als thermischer Rückfall die maximale Lüftergeschwindigkeit angefordert.
 .SH FILES
 .TP
 .I /usr/bin/Tuxedo-Fan-Control
