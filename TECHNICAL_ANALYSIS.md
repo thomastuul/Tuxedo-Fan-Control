@@ -63,6 +63,32 @@ aktive Clevo-ACPI/WMI-Schnittstelle in den hardwareabhängigen EC-Zugriff. Mit
 `W_CL_FANAUTO` kann die automatische Firmware-Regelung für alle drei Kanäle
 wieder aktiviert werden.
 
+Der Clevo-Pfad von `tuxedo-drivers` 4.22.3 rundet Werte unterhalb der
+Mindestgeschwindigkeit: Werte von 0 bis 30 werden zu 0, Werte von 31 bis 62 zu
+63 und höhere Werte bleiben unverändert. Nach `W_CL_FANSPEED` wartet der
+Treiber 100 ms, damit ein nachfolgendes `R_CL_FANINFO1` den neuen Wert liefern
+kann. Tuxedo-Fan-Control bildet diese Normalisierung bei seiner Rückleseprüfung
+nach.
+
+### Rückleseprüfung und maskierte Treiberfehler
+
+Der Clevo-IOCTL-Handler in `tuxedo-drivers` 4.22.3 übernimmt den Rückgabestatus
+von `clevo_evaluate_method()` bei mehreren Lesezugriffen, wertet ihn aber nicht
+aus. Beim Schreibzugriff `W_CL_FANSPEED` wird der Status nicht gespeichert. Der
+Handler gibt anschließend unabhängig davon 0 an den Userspace zurück. Dieses
+Verhalten ist auch in der
+[aktuellen offiziellen Treiberquelle](https://github.com/tuxedocomputers/tuxedo-drivers/blob/main/src/tuxedo_io/tuxedo_io.c#L285-L394)
+sichtbar. Ein nicht angewendeter ACPI-/WMI-Befehl kann deshalb auf
+Userspace-Ebene als erfolgreicher IOCTL erscheinen.
+
+Nach jedem Lüfterbefehl liest Tuxedo-Fan-Control daher `R_CL_FANINFO1` erneut.
+Der Regelzyklus gilt nur als erfolgreich, wenn der dabei enthaltene
+Temperaturwert grundsätzlich plausibel ist und der zurückgelesene Lüfterwert
+dem normalisierten Sollwert entspricht. Ein abweichender Wert oder eine
+genullte, unplausible Antwort wird wie ein EC-Kommunikationsfehler behandelt.
+Die Prüfung kann keinen Fehler erkennen, bei dem sowohl Schreib- als auch
+Lesezugriff konsistent falsche, aber plausible Werte liefern.
+
 ## TUXEDO-Control-Center-Referenzkurven
 
 Das TUXEDO Control Center (TCC) definiert fünf Standardprofile mit getrennten
@@ -206,7 +232,9 @@ abhängig.
 Die Regelung liest die Temperatur alle 250 ms und folgt dem zugehörigen
 Tabellenwert unmittelbar, sofern der Messwert plausibel ist. Der aktuelle
 EC-Wert wird bei einer Änderung sowie spätestens alle zwei Sekunden erneut an
-den EC gesendet.
+den EC gesendet und anschließend zurückgelesen. Temperatur, Sollwert und
+zurückgelesener Lüfterwert werden alle 30 Sekunden in das Journal geschrieben
+und als systemd-Statustext veröffentlicht.
 
 Schlägt eine Temperaturtransaktion fehl oder liefert der EC einen implausiblen
 Temperaturwert, wird aus diesem Wert kein Lüftersollwert berechnet und in diesem
@@ -217,12 +245,21 @@ aufeinanderfolgenden fehlgeschlagenen Zyklen beendet sich der Daemon mit einem
 Fehler und einer Diagnose. Die systemd-Unit startet ihn wegen
 `Restart=on-failure` mit einer Wartezeit und Start-Limitierung neu.
 
-Bei kontrolliertem Stop per Signal und nach wiederholt implausiblen
-Temperaturwerten versucht der Code, vor dem Beenden den höchsten von den
-Profilen verwendeten Sollwert `255` für Lüfter 1 zu setzen. Die aktuellen Werte
-weiterer Lüfter werden dabei beibehalten. Nach IOCTL-Kommunikationsfehlern wird
-keine zusätzliche Recovery-Transaktion erzwungen; die weitere Schutzwirkung der
-Firmware und der Hardware bleibt erforderlich.
+Die Unit aktiviert zusätzlich einen systemd-Service-Watchdog mit fünf Sekunden
+Zeitlimit. Der Daemon sendet nach vollständig durchlaufenen Regelzyklen
+`WATCHDOG=1`. Bleibt der einzige Regelthread beispielsweise in einem synchronen
+IOCTL hängen, beendet systemd den Prozess mit `SIGABRT` und startet ihn gemäß
+`Restart=on-failure` neu. Ein im Kernel ununterbrechbar blockierter ACPI-/WMI-
+Aufruf kann durch einen Userspace-Watchdog nicht garantiert gelöst werden; in
+diesem Fall bleibt eine Treiber-, Firmware- oder Systemwiederherstellung nötig.
+
+Bei kontrolliertem Stop und vor dem Beenden nach wiederholten Regelungsfehlern
+versucht der Code mit dem dokumentierten `W_CL_FANAUTO`, die automatische
+Firmware-Regelung für alle Kanäle wieder zu aktivieren. Nur wenn dieser IOCTL
+einen Fehler meldet, wird als thermischer Rückfall der höchste von den Profilen
+verwendete Sollwert `255` für Lüfter 1 angefordert. Weil der Treiber auch den
+Status von `W_CL_FANAUTO` maskieren kann, bleibt die weitere Schutzwirkung der
+Firmware und Hardware erforderlich.
 
 ## Berechtigungen und Betriebsrisiken
 
@@ -231,7 +268,8 @@ privilegierte Prozesse zugänglich ist. Er benötigt jedoch keine Linux-
 Capabilities; insbesondere ist `CAP_SYS_RAWIO` aus der Bounding Set entfernt.
 `DevicePolicy=closed` und `DeviceAllow=/dev/tuxedo_io rw` begrenzen den
 Gerätezugriff auf die vorgesehene Kernel-API. Hinzu kommen Dateisystemschutz,
-privates `/tmp`, eingeschränkte Address-Families und Start-Limits.
+privates `/tmp`, eingeschränkte Address-Families, ein systemd-Watchdog und
+Start-Limits.
 
 Die IOCTL-Funktionen propagieren Kommunikationsfehler bis in die
 Regelschleife. Erfolgreich gelesene

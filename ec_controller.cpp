@@ -28,6 +28,8 @@ constexpr std::uint8_t MIN_PLAUSIBLE_TEMPERATURE = 10;
 constexpr std::uint8_t MAX_PLAUSIBLE_TEMPERATURE = 110;
 constexpr int MAX_PLAUSIBLE_TEMPERATURE_STEP = 30;
 constexpr unsigned TEMPERATURE_SHIFT = 16;
+constexpr unsigned FAN_ON_MIN_SPEED_PERCENT = 25;
+constexpr unsigned CLEVO_FAN_SPEED_MAX = 0xff;
 
 } // namespace
 
@@ -43,6 +45,8 @@ const char *ecStatusMessage(EcStatus status) {
     return "tuxedo_io fan information read failed";
   case EcStatus::WriteFailed:
     return "tuxedo_io fan control write failed";
+  case EcStatus::FanSpeedMismatch:
+    return "EC did not apply the requested fan speed";
   }
 
   return "unknown EC error";
@@ -117,7 +121,8 @@ EcStatus EcController::getLocalTemp(std::uint8_t &temperature) {
   return EcStatus::Success;
 }
 
-EcStatus EcController::setFanSpeed(std::uint8_t speed) {
+EcStatus EcController::setFanSpeed(std::uint8_t speed,
+                                   std::uint8_t *observedSpeed) {
   std::uint32_t fanInfo[CLEVO_FAN_COUNT] = {};
   for (unsigned fanIndex = 0; fanIndex < CLEVO_FAN_COUNT; ++fanIndex) {
     const EcStatus STATUS = readFanInfo(fanIndex, fanInfo[fanIndex]);
@@ -134,6 +139,27 @@ EcStatus EcController::setFanSpeed(std::uint8_t speed) {
   std::int32_t argument = static_cast<std::int32_t>(packedSpeeds);
   if (!transport.call(W_CL_FANSPEED, argument)) {
     return EcStatus::WriteFailed;
+  }
+
+  std::uint32_t verificationInfo = 0;
+  const EcStatus VERIFICATION_STATUS = readFanInfo(0, verificationInfo);
+  if (VERIFICATION_STATUS != EcStatus::Success) {
+    return VERIFICATION_STATUS;
+  }
+
+  const std::uint8_t VERIFICATION_TEMPERATURE =
+      static_cast<std::uint8_t>((verificationInfo >> TEMPERATURE_SHIFT) & 0xff);
+  if (!isPlausibleTemperature(VERIFICATION_TEMPERATURE, false, 0)) {
+    return EcStatus::ReadFailed;
+  }
+
+  const std::uint8_t OBSERVED_SPEED =
+      static_cast<std::uint8_t>(verificationInfo & 0xff);
+  if (observedSpeed != nullptr) {
+    *observedSpeed = OBSERVED_SPEED;
+  }
+  if (OBSERVED_SPEED != normalizeClevoFanSpeed(speed)) {
+    return EcStatus::FanSpeedMismatch;
   }
   return EcStatus::Success;
 }
@@ -187,4 +213,19 @@ bool acceptPlausibleTemperature(std::uint8_t temperature,
   previousTemperature = temperature;
   hasPreviousTemperature = true;
   return true;
+}
+
+std::uint8_t normalizeClevoFanSpeed(std::uint8_t speed) {
+  const unsigned FAN_OFF_THRESHOLD =
+      FAN_ON_MIN_SPEED_PERCENT * CLEVO_FAN_SPEED_MAX / 2 / 100;
+  const unsigned FAN_ON_MIN_SPEED =
+      FAN_ON_MIN_SPEED_PERCENT * CLEVO_FAN_SPEED_MAX / 100;
+
+  if (speed < FAN_OFF_THRESHOLD) {
+    return 0;
+  }
+  if (speed < FAN_ON_MIN_SPEED) {
+    return static_cast<std::uint8_t>(FAN_ON_MIN_SPEED);
+  }
+  return speed;
 }

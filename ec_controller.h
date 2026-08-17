@@ -11,7 +11,8 @@ enum class EcStatus {
   DeviceUnavailable,
   UnsupportedHardware,
   ReadFailed,
-  WriteFailed
+  WriteFailed,
+  FanSpeedMismatch
 };
 
 const char *ecStatusMessage(EcStatus status);
@@ -44,7 +45,8 @@ public:
   explicit EcController(TuxedoIoTransport &transport);
 
   EcStatus initialize();
-  EcStatus setFanSpeed(std::uint8_t speed);
+  EcStatus setFanSpeed(std::uint8_t speed,
+                       std::uint8_t *observedSpeed = nullptr);
   EcStatus setFansAuto();
   EcStatus getLocalTemp(std::uint8_t &temperature);
 
@@ -63,3 +65,4 @@ bool isPlausibleTemperature(std::uint8_t temperature,
 bool acceptPlausibleTemperature(std::uint8_t temperature,
                                 bool &hasPreviousTemperature,
                                 std::uint8_t &previousTemperature);
+std::uint8_t normalizeClevoFanSpeed(std::uint8_t speed);
