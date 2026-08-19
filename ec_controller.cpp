@@ -26,7 +26,7 @@ constexpr unsigned long W_CL_FANAUTO =
 
 constexpr std::uint8_t MIN_PLAUSIBLE_TEMPERATURE = 10;
 constexpr std::uint8_t MAX_PLAUSIBLE_TEMPERATURE = 110;
-constexpr int MAX_PLAUSIBLE_TEMPERATURE_STEP = 30;
+constexpr int MAX_PLAUSIBLE_TEMPERATURE_DROP = 30;
 constexpr unsigned TEMPERATURE_SHIFT = 16;
 constexpr unsigned FAN_ON_MIN_SPEED_PERCENT = 25;
 constexpr unsigned CLEVO_FAN_SPEED_MAX = 0xff;
@@ -73,6 +73,10 @@ bool SystemTuxedoIoTransport::call(unsigned long request,
     return false;
   }
   return ioctl(fileDescriptor, request, &argument) >= 0;
+}
+
+void SystemTuxedoIoTransport::waitMilliseconds(unsigned milliseconds) {
+  usleep(milliseconds * 1000);
 }
 
 EcController::EcController(TuxedoIoTransport &transport)
@@ -141,27 +145,38 @@ EcStatus EcController::setFanSpeed(std::uint8_t speed,
     return EcStatus::WriteFailed;
   }
 
-  std::uint32_t verificationInfo = 0;
-  const EcStatus VERIFICATION_STATUS = readFanInfo(0, verificationInfo);
-  if (VERIFICATION_STATUS != EcStatus::Success) {
-    return VERIFICATION_STATUS;
+  const std::uint8_t EXPECTED_SPEED = normalizeClevoFanSpeed(speed);
+  bool receivedPlausibleFanInfo = false;
+  for (unsigned attempt = 0; attempt < FAN_SPEED_VERIFICATION_ATTEMPTS;
+       ++attempt) {
+    if (attempt > 0) {
+      transport.waitMilliseconds(FAN_SPEED_VERIFICATION_RETRY_MS);
+    }
+
+    std::uint32_t verificationInfo = 0;
+    if (readFanInfo(0, verificationInfo) != EcStatus::Success) {
+      continue;
+    }
+
+    const std::uint8_t VERIFICATION_TEMPERATURE = static_cast<std::uint8_t>(
+        (verificationInfo >> TEMPERATURE_SHIFT) & 0xff);
+    if (!isPlausibleTemperature(VERIFICATION_TEMPERATURE, false, 0)) {
+      continue;
+    }
+
+    const std::uint8_t OBSERVED_SPEED =
+        static_cast<std::uint8_t>(verificationInfo & 0xff);
+    receivedPlausibleFanInfo = true;
+    if (observedSpeed != nullptr) {
+      *observedSpeed = OBSERVED_SPEED;
+    }
+    if (OBSERVED_SPEED == EXPECTED_SPEED) {
+      return EcStatus::Success;
+    }
   }
 
-  const std::uint8_t VERIFICATION_TEMPERATURE =
-      static_cast<std::uint8_t>((verificationInfo >> TEMPERATURE_SHIFT) & 0xff);
-  if (!isPlausibleTemperature(VERIFICATION_TEMPERATURE, false, 0)) {
-    return EcStatus::ReadFailed;
-  }
-
-  const std::uint8_t OBSERVED_SPEED =
-      static_cast<std::uint8_t>(verificationInfo & 0xff);
-  if (observedSpeed != nullptr) {
-    *observedSpeed = OBSERVED_SPEED;
-  }
-  if (OBSERVED_SPEED != normalizeClevoFanSpeed(speed)) {
-    return EcStatus::FanSpeedMismatch;
-  }
-  return EcStatus::Success;
+  return receivedPlausibleFanInfo ? EcStatus::FanSpeedMismatch
+                                  : EcStatus::ReadFailed;
 }
 
 EcStatus EcController::setFansAuto() {
@@ -176,13 +191,21 @@ EcStatus EcController::setFansAuto() {
   return EcStatus::Success;
 }
 
-bool ecFailureLimitReached(unsigned &consecutiveFailures) {
-  ++consecutiveFailures;
-  return consecutiveFailures >= MAX_CONSECUTIVE_EC_FAILURES;
+bool ecFailureLimitReached(EcFailureState &state,
+                           std::uint64_t nowMilliseconds) {
+  if (!state.active) {
+    state.active = true;
+    state.firstFailureMilliseconds = nowMilliseconds;
+    return false;
+  }
+
+  return nowMilliseconds - state.firstFailureMilliseconds >=
+         EC_FAILURE_GRACE_PERIOD_MS;
 }
 
-void resetEcFailures(unsigned &consecutiveFailures) {
-  consecutiveFailures = 0;
+void resetEcFailures(EcFailureState &state) {
+  state.active = false;
+  state.firstFailureMilliseconds = 0;
 }
 
 bool isPlausibleTemperature(std::uint8_t temperature,
@@ -197,9 +220,15 @@ bool isPlausibleTemperature(std::uint8_t temperature,
     return true;
   }
 
-  return std::abs(static_cast<int>(temperature) -
-                  static_cast<int>(previousTemperature)) <=
-         MAX_PLAUSIBLE_TEMPERATURE_STEP;
+  if (temperature >= previousTemperature) {
+    // A fast rise must increase cooling immediately. Rejecting it would retain
+    // a dangerously low fan setting until the failure grace period expires.
+    return true;
+  }
+
+  return static_cast<int>(previousTemperature) -
+             static_cast<int>(temperature) <=
+         MAX_PLAUSIBLE_TEMPERATURE_DROP;
 }
 
 bool acceptPlausibleTemperature(std::uint8_t temperature,

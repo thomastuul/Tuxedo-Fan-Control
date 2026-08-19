@@ -34,10 +34,17 @@ Die fünf diskreten CPU-Kennlinien des TUXEDO Control Centers werden unterstütz
 Die Prozentwerte werden mit Rundung in den EC-Bereich 0 bis 255 umgerechnet.
 Die Kennlinien sind in der Projektdokumentation beschrieben.
 .PP
-Nach jedem Lüfterbefehl liest der Dienst den angewendeten Wert zurück. Eine
-Abweichung vom durch den Kerneltreiber normalisierten Sollwert wird als
-Regelungsfehler behandelt. Temperatur, Sollwert und Rücklesewert werden in
-regelmäßigen Abständen protokolliert.
+Temperaturen außerhalb von 10 bis 110 Grad Celsius und abrupte Abfälle von mehr
+als 30 Grad werden verworfen. Anstiege innerhalb des gültigen Bereichs werden
+auch bei großen Sprüngen sofort akzeptiert, damit eine reale Erwärmung ohne
+Verzögerung eine höhere Lüfterstufe auslöst.
+.PP
+Nach jedem Lüfterbefehl liest der Dienst den angewendeten Wert bis zu fünfmal
+innerhalb von 400 ms zurück, ohne den Befehl erneut zu schreiben. Vorübergehend
+fehlgeschlagene, genullte, unplausible oder verzögerte Rücklesungen werden damit
+toleriert. Eine fortbestehende Abweichung vom durch den Kerneltreiber
+normalisierten Sollwert wird als Regelungsfehler behandelt. Temperatur,
+Sollwert und Rücklesewert werden in regelmäßigen Abständen protokolliert.
 .SH HARDWARE ACCESS
 Der Dienst verwendet die Clevo-IOCTLs
 .BR R_CL_FANINFO1 ,
@@ -90,6 +97,11 @@ Dienst über
 .B W_CL_FANAUTO
 die automatische Firmware-Regelung an. Meldet dieser Befehl einen Fehler, wird
 als thermischer Rückfall die maximale Lüftergeschwindigkeit angefordert.
+.PP
+Vorübergehende EC-Fehler werden innerhalb eines zusammenhängenden
+Zehn-Sekunden-Fensters toleriert. Ein erfolgreicher Regelzyklus setzt dieses
+Fenster zurück. Erst ein fortbestehender Fehler beendet den Dienst, sodass
+systemd ihn gemäß seiner Restart-Richtlinie neu starten kann.
 .SH FILES
 .TP
 .I /usr/bin/Tuxedo-Fan-Control

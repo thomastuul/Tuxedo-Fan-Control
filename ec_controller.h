@@ -3,8 +3,10 @@
 #include <cstdint>
 
 constexpr const char *TUXEDO_IO_DEVICE = "/dev/tuxedo_io";
-constexpr unsigned MAX_CONSECUTIVE_EC_FAILURES = 3;
 constexpr unsigned CLEVO_FAN_COUNT = 3;
+constexpr unsigned FAN_SPEED_VERIFICATION_ATTEMPTS = 5;
+constexpr unsigned FAN_SPEED_VERIFICATION_RETRY_MS = 100;
+constexpr std::uint64_t EC_FAILURE_GRACE_PERIOD_MS = 10000;
 
 enum class EcStatus {
   Success,
@@ -23,6 +25,7 @@ public:
   }
   virtual bool available() const = 0;
   virtual bool call(unsigned long request, std::int32_t &argument) = 0;
+  virtual void waitMilliseconds(unsigned milliseconds) = 0;
 };
 
 class SystemTuxedoIoTransport : public TuxedoIoTransport {
@@ -35,6 +38,7 @@ public:
 
   bool available() const override;
   bool call(unsigned long request, std::int32_t &argument) override;
+  void waitMilliseconds(unsigned milliseconds) override;
 
 private:
   int fileDescriptor;
@@ -57,8 +61,14 @@ private:
   bool initialized = false;
 };
 
-bool ecFailureLimitReached(unsigned &consecutiveFailures);
-void resetEcFailures(unsigned &consecutiveFailures);
+struct EcFailureState {
+  bool active = false;
+  std::uint64_t firstFailureMilliseconds = 0;
+};
+
+bool ecFailureLimitReached(EcFailureState &state,
+                           std::uint64_t nowMilliseconds);
+void resetEcFailures(EcFailureState &state);
 bool isPlausibleTemperature(std::uint8_t temperature,
                             bool hasPreviousTemperature,
                             std::uint8_t previousTemperature);

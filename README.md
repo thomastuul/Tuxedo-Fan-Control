@@ -160,20 +160,32 @@ documented in [TECHNICAL_ANALYSIS.md](TECHNICAL_ANALYSIS.md).
 
 Kernel-interface failures are reported explicitly. The daemon skips fan control
 when a temperature read fails or the returned temperature is implausible. It
-exits with an error after three consecutive failed control cycles, and the
-supplied systemd unit then applies its rate-limited `Restart=on-failure` policy.
+allows transient failures for a continuous ten-second recovery window. Any
+fully successful control cycle resets that window. Only a failure that persists
+through the window makes the daemon exit, after which the supplied systemd unit
+applies its rate-limited `Restart=on-failure` policy.
 
-Every fan-speed write is followed by a fan-information readback. A write is
-accepted only when the returned temperature is basically plausible and the
-observed speed matches the value after the kernel driver's documented minimum-
-speed normalization. This detects IOCTLs that report success even though the EC
-did not apply the requested value. The service logs temperature, requested
-speed, and observed speed every 30 seconds.
+Temperatures outside 10–110 °C and sudden drops greater than 30 °C are rejected.
+Rises inside that range are accepted immediately even when large, because
+delaying a real heat spike would retain an unsafe lower fan setting; a transient
+high value only causes conservative additional cooling.
+
+Every fan-speed write is followed by up to five fan-information readbacks over
+400 milliseconds. The command is written only once: failed, zeroed,
+implausible, stale, or delayed readbacks are retried instead of causing repeated
+EC writes. A write is accepted only when a plausible readback matches the value
+after the kernel driver's documented minimum-speed normalization. A persistent
+plausible mismatch or a window containing no plausible readback fails the
+control cycle. This detects IOCTLs that report success even though the EC did
+not apply the requested value, while tolerating transient EC readback errors.
+The service logs temperature, requested speed, and observed speed every 30
+seconds.
 
 The systemd unit also supervises completed control cycles with a five-second
-service watchdog. A stalled userspace control loop is aborted and restarted;
-an uninterruptibly blocked kernel operation can still require driver, firmware,
-or system recovery.
+service watchdog. The daemon services it after successful cycles and after
+handled failed cycles in the recovery window. A stalled userspace control loop
+is aborted and restarted; an uninterruptibly blocked kernel operation can still
+require driver, firmware, or system recovery.
 
 During a controlled shutdown and before exiting after repeated control failures,
 the daemon asks the documented `W_CL_FANAUTO` interface to restore automatic
@@ -185,9 +197,9 @@ that recovery IOCTL reports an error.
 The CTest suite checks device and hardware detection, IOCTL temperature
 decoding, fan-speed boundary values, preservation of other fan channels,
 kernel minimum-speed normalization, readback mismatch detection, masked driver
-failures, failure propagation, and the consecutive-failure policy without
-accessing laptop hardware. The tests must pass before an installation or release
-build.
+failures, delayed and invalid readback retries without repeated writes, failure
+propagation, and the time-based recovery policy without accessing laptop
+hardware. The tests must pass before an installation or release build.
 
 The project provides a Debian-based Docker image containing the C++ and Markdown
 quality tools. Build the image and run all checks with:
