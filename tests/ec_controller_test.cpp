@@ -34,9 +34,14 @@ public:
     return RESULT.success;
   }
 
+  void waitMilliseconds(unsigned milliseconds) override {
+    waits.push_back(milliseconds);
+  }
+
   bool deviceAvailable = true;
   std::vector<CallResult> results;
   std::vector<std::pair<unsigned long, std::int32_t>> calls;
+  std::vector<unsigned> waits;
 
 private:
   std::size_t nextResult = 0;
@@ -174,20 +179,55 @@ void testFanWriteFailurePropagation() {
 }
 
 void testFanSpeedVerification() {
+  FakeTuxedoIoTransport delayed;
+  delayed.results = {{true, 1},
+                     {true, fanInfo(40, 255)},
+                     {true, 0},
+                     {true, 0},
+                     {true, 0},
+                     {true, fanInfo(40, 255)},
+                     {false, 0},
+                     {true, 0},
+                     {true, 0},
+                     {true, fanInfo(40, 0)}};
+  EcController delayedEc(delayed);
+  expectStatus(
+      "delayed verification init", EcStatus::Success, delayedEc.initialize());
+  std::uint8_t observedSpeed = 255;
+  expectStatus("delayed verification eventually succeeds",
+               EcStatus::Success,
+               delayedEc.setFanSpeed(0, &observedSpeed));
+  expectEqual("delayed verification reports final speed", 0, observedSpeed);
+  expectEqual("delayed verification retries without rewriting",
+              4,
+              static_cast<int>(delayed.waits.size()));
+  for (const unsigned WAIT : delayed.waits) {
+    expectEqual("verification retry delay",
+                FAN_SPEED_VERIFICATION_RETRY_MS,
+                static_cast<int>(WAIT));
+  }
+
   FakeTuxedoIoTransport mismatch;
   mismatch.results = {{true, 1},
                       {true, fanInfo(40, 255)},
                       {true, 0},
                       {true, 0},
                       {true, 0},
+                      {true, fanInfo(40, 255)},
+                      {true, fanInfo(40, 255)},
+                      {true, fanInfo(40, 255)},
+                      {true, fanInfo(40, 255)},
                       {true, fanInfo(40, 255)}};
   EcController mismatchEc(mismatch);
   expectStatus("mismatch init", EcStatus::Success, mismatchEc.initialize());
-  std::uint8_t observedSpeed = 0;
+  observedSpeed = 0;
   expectStatus("unapplied fan speed",
                EcStatus::FanSpeedMismatch,
                mismatchEc.setFanSpeed(0, &observedSpeed));
   expectEqual("mismatch reports observed speed", 255, observedSpeed);
+  expectEqual("persistent mismatch exhausts verification attempts",
+              FAN_SPEED_VERIFICATION_ATTEMPTS - 1,
+              static_cast<int>(mismatch.waits.size()));
 
   FakeTuxedoIoTransport verificationFailure;
   verificationFailure.results = {{true, 1},
@@ -195,6 +235,10 @@ void testFanSpeedVerification() {
                                  {true, 0},
                                  {true, 0},
                                  {true, 0},
+                                 {false, 0},
+                                 {false, 0},
+                                 {false, 0},
+                                 {false, 0},
                                  {false, 0}};
   EcController verificationFailureEc(verificationFailure);
   expectStatus("verification failure init",
@@ -207,6 +251,10 @@ void testFanSpeedVerification() {
   FakeTuxedoIoTransport maskedDriverFailure;
   maskedDriverFailure.results = {{true, 1},
                                  {true, fanInfo(40, 255)},
+                                 {true, 0},
+                                 {true, 0},
+                                 {true, 0},
+                                 {true, 0},
                                  {true, 0},
                                  {true, 0},
                                  {true, 0},
@@ -244,15 +292,19 @@ void testAutomaticMode() {
 }
 
 void testConsecutiveFailurePolicy() {
-  unsigned consecutiveFailures = 0;
-  expectTrue("first failure continues",
-             !ecFailureLimitReached(consecutiveFailures));
-  expectTrue("second failure continues",
-             !ecFailureLimitReached(consecutiveFailures));
-  expectTrue("third failure stops", ecFailureLimitReached(consecutiveFailures));
-  resetEcFailures(consecutiveFailures);
-  expectEqual(
-      "success resets failures", 0, static_cast<int>(consecutiveFailures));
+  EcFailureState state;
+  expectTrue("first failure starts grace period",
+             !ecFailureLimitReached(state, 1000));
+  expectTrue(
+      "failure before grace deadline continues",
+      !ecFailureLimitReached(state, 1000 + EC_FAILURE_GRACE_PERIOD_MS - 1));
+  expectTrue("failure at grace deadline stops",
+             ecFailureLimitReached(state, 1000 + EC_FAILURE_GRACE_PERIOD_MS));
+  resetEcFailures(state);
+  expectTrue("success resets active failure window", !state.active);
+  expectEqual("success resets failure timestamp",
+              0,
+              static_cast<int>(state.firstFailureMilliseconds));
 }
 
 void testTemperaturePlausibilityPolicy() {
@@ -266,8 +318,10 @@ void testTemperaturePlausibilityPolicy() {
              isPlausibleTemperature(62, true, 55));
   expectTrue("large temperature drop is rejected",
              !isPlausibleTemperature(20, true, 70));
-  expectTrue("large temperature jump is rejected",
-             !isPlausibleTemperature(100, true, 60));
+  expectTrue("large temperature rise is accepted for safe cooling",
+             isPlausibleTemperature(100, true, 60));
+  expectTrue("out-of-range rise remains rejected",
+             !isPlausibleTemperature(120, true, 60));
 }
 
 void testAcceptedTemperatureUpdatesPlausibilityBaseline() {

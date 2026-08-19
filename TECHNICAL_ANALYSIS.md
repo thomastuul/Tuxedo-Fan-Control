@@ -32,10 +32,14 @@ bei der Hardwareidentifikation oder beim IOCTL werden als explizite Statuswerte
 bis in die Regelschleife propagiert.
 
 Der gelesene Wert wird als Temperatur in Grad Celsius interpretiert. Werte
-außerhalb von 10 bis 110 °C und Sprünge von mehr als 30 °C gegenüber dem letzten
+außerhalb von 10 bis 110 °C und Abfälle von mehr als 30 °C gegenüber dem letzten
 plausiblen Messwert werden als implausibel verworfen und führen in diesem Zyklus
-zu keinem Lüfterbefehl. Der Code geht entsprechend der TUXEDO-API davon aus,
-dass dieses Byte einen Celsiuswert liefert.
+zu keinem Lüfterbefehl. Anstiege innerhalb des gültigen Bereichs werden auch bei
+mehr als 30 °C sofort akzeptiert: Ein schneller realer Temperaturanstieg muss
+die Kühlung unmittelbar erhöhen, während ein einzelner fehlerhaft hoher Wert
+höchstens eine konservativ zu hohe Lüfterstufe auslöst. Der Code geht
+entsprechend der TUXEDO-API davon aus, dass dieses Byte einen Celsiuswert
+liefert.
 
 Aus dem Quelltext lässt sich nicht sicher bestimmen, ob dieser EC-Wert die
 CPU-Kerntemperatur, die CPU-Package-Temperatur oder einen anderen internen
@@ -81,13 +85,17 @@ Verhalten ist auch in der
 sichtbar. Ein nicht angewendeter ACPI-/WMI-Befehl kann deshalb auf
 Userspace-Ebene als erfolgreicher IOCTL erscheinen.
 
-Nach jedem Lüfterbefehl liest Tuxedo-Fan-Control daher `R_CL_FANINFO1` erneut.
-Der Regelzyklus gilt nur als erfolgreich, wenn der dabei enthaltene
-Temperaturwert grundsätzlich plausibel ist und der zurückgelesene Lüfterwert
-dem normalisierten Sollwert entspricht. Ein abweichender Wert oder eine
-genullte, unplausible Antwort wird wie ein EC-Kommunikationsfehler behandelt.
-Die Prüfung kann keinen Fehler erkennen, bei dem sowohl Schreib- als auch
-Lesezugriff konsistent falsche, aber plausible Werte liefern.
+Nach jedem Lüfterbefehl liest Tuxedo-Fan-Control daher `R_CL_FANINFO1` bis zu
+fünfmal innerhalb von 400 ms erneut. Der Lüfterbefehl selbst wird dabei genau
+einmal gesendet. Fehlgeschlagene, genullte oder wegen ihrer Temperatur
+unplausible Rücklesungen werden übersprungen, damit ein verzögerter oder
+vorübergehend fehlerhafter EC-Wert nicht sofort den Regelzyklus verwirft. Der
+Regelzyklus gilt als erfolgreich, sobald ein plausibler zurückgelesener
+Lüfterwert dem normalisierten Sollwert entspricht. Bleibt nach fünf Versuchen
+nur ein plausibler abweichender Wert, wird eine Sollwertabweichung gemeldet;
+gab es gar keine plausible Antwort, wird ein Lesefehler gemeldet. Die Prüfung
+kann keinen Fehler erkennen, bei dem sowohl Schreib- als auch Lesezugriff
+konsistent falsche, aber plausible Werte liefern.
 
 ## TUXEDO-Control-Center-Referenzkurven
 
@@ -239,14 +247,17 @@ und als systemd-Statustext veröffentlicht.
 Schlägt eine Temperaturtransaktion fehl oder liefert der EC einen implausiblen
 Temperaturwert, wird aus diesem Wert kein Lüftersollwert berechnet und in diesem
 Zyklus kein regulärer Lüfterbefehl gesendet. Ein fehlgeschlagener Lüfterbefehl
-wird ebenfalls als Fehler des Regelzyklus behandelt. Nach einem vollständig
-erfolgreichen Zyklus wird der Fehlerzähler zurückgesetzt. Nach drei
-aufeinanderfolgenden fehlgeschlagenen Zyklen beendet sich der Daemon mit einem
-Fehler und einer Diagnose. Die systemd-Unit startet ihn wegen
-`Restart=on-failure` mit einer Wartezeit und Start-Limitierung neu.
+wird ebenfalls als Fehler des Regelzyklus behandelt. Ein zusammenhängendes
+Fehlerfenster darf zehn Sekunden dauern; ein vollständig erfolgreicher Zyklus
+setzt es sofort zurück. Erst wenn ein Fehler bis zum Ende dieses Zeitfensters
+fortbesteht, beendet sich der Daemon mit einer Diagnose. Diese zeitbasierte
+Grenze verhindert, dass schnelle Fehlzyklen schon nach wenigen hundert
+Millisekunden zur Start-Limitierung führen. Die systemd-Unit startet den Dienst
+wegen `Restart=on-failure` mit einer Wartezeit und Start-Limitierung neu.
 
 Die Unit aktiviert zusätzlich einen systemd-Service-Watchdog mit fünf Sekunden
-Zeitlimit. Der Daemon sendet nach vollständig durchlaufenen Regelzyklen
+Zeitlimit. Der Daemon sendet nach vollständig durchlaufenen erfolgreichen und
+innerhalb des Fehlerfensters behandelten fehlgeschlagenen Regelzyklen
 `WATCHDOG=1`. Bleibt der einzige Regelthread beispielsweise in einem synchronen
 IOCTL hängen, beendet systemd den Prozess mit `SIGABRT` und startet ihn gemäß
 `Restart=on-failure` neu. Ein im Kernel ununterbrechbar blockierter ACPI-/WMI-
@@ -260,6 +271,34 @@ einen Fehler meldet, wird als thermischer Rückfall der höchste von den Profile
 verwendete Sollwert `255` für Lüfter 1 angefordert. Weil der Treiber auch den
 Status von `W_CL_FANAUTO` maskieren kann, bleibt die weitere Schutzwirkung der
 Firmware und Hardware erforderlich.
+
+## Live-Validierung auf InfinityBook S 15 Gen6
+
+Am 19. August 2026 wurde die Regelung auf einem TUXEDO InfinityBook S 15 Gen6
+mit Intel Core i5-1135G7, acht logischen CPUs, `tuxedo-drivers` 4.22.3 und dem
+Profil `quiet` getestet. `stress-ng` belastete alle acht logischen CPUs mit
+`matrixprod` für 120 Sekunden; anschließend wurde die Abkühlung beobachtet.
+
+Ein erster Lauf machte die zuvor symmetrische 30-°C-Sprungprüfung sichtbar: Der
+reale schnelle Anstieg des EC-Werts von 49 auf 92 °C wurde zehn Sekunden lang
+verworfen und löste einen Dienstneustart aus. Daraus folgt die oben beschriebene
+asymmetrische Prüfung: Ein gültiger Anstieg erhöht die Kühlung sofort, während
+nur ein großer Abfall blockiert wird.
+
+Im Wiederholungslauf mit dieser Korrektur erreichten Linux-Package- und
+Kerntemperatursensoren jeweils maximal 92 °C. Der EC meldete 92 °C;
+Soll- und Rücklesewert betrugen übereinstimmend 230. Bei 89 °C folgte die
+Regelung mit 217/217. Nach Lastende wurden bei 63 °C Soll 56 und der vom Treiber
+normalisierte Rücklesewert 63 bestätigt. Bei 50 °C unterschritt der EC-Wert die
+erste aktive Stufe des Quiet-Profils und Soll sowie Rücklesewert gingen auf 0/0
+zurück. Der Dienst blieb während des gesamten Wiederholungslaufs aktiv, der
+systemd-Neustartzähler blieb bei null und `stress-ng` meldete alle acht
+CPU-Stressoren als erfolgreich.
+
+Der systemd-Statustext wird nur alle 30 Sekunden aktualisiert und ist daher eine
+periodische Stichprobe, keine lückenlose EC-Aufzeichnung. Linux-Sensorwerte und
+der EC-Wert sind außerdem nicht in jedem Zeitpunkt identisch; die Messreihe
+bestätigt die Regelantwort, aber keine physische Lüfterdrehzahl in U/min.
 
 ## Berechtigungen und Betriebsrisiken
 

@@ -59,7 +59,7 @@ static void setFailsafeFanSpeed(EcController &ec) {
 static void restoreAutomaticFanControl(EcController &ec) {
   const EcStatus STATUS = ec.setFansAuto();
   if (STATUS == EcStatus::Success) {
-    std::clog << "Restored automatic firmware fan control before stopping\n";
+    std::clog << "Requested automatic firmware fan control before stopping\n";
     return;
   }
 
@@ -98,7 +98,7 @@ int main(int argc, const char *argv[]) {
 
   int lastFanSpeed = -1;
   std::uint64_t lastTimeFanUpdate = 0;
-  unsigned consecutiveEcFailures = 0;
+  EcFailureState ecFailureState;
   bool hasPreviousTemperature = false;
   std::uint8_t previousTemperature = 0;
   int lastObservedFanSpeed = -1;
@@ -110,10 +110,14 @@ int main(int argc, const char *argv[]) {
     if (status != EcStatus::Success) {
       std::cerr << "EC temperature read failed: " << ecStatusMessage(status)
                 << '\n';
-      if (ecFailureLimitReached(consecutiveEcFailures)) {
-        std::cerr << "Too many consecutive EC failures; stopping fan control\n";
+      if (ecFailureLimitReached(ecFailureState, NOW)) {
+        std::cerr << "EC failures persisted beyond the recovery grace period; "
+                     "stopping fan control\n";
         restoreAutomaticFanControl(ec);
         return EXIT_FAILURE;
+      }
+      if (WATCHDOG_ENABLED) {
+        sd_notify(0, "WATCHDOG=1");
       }
       usleep(REFRESH_RATE_MS * 1000);
       continue;
@@ -123,11 +127,15 @@ int main(int argc, const char *argv[]) {
             temperature, hasPreviousTemperature, previousTemperature)) {
       std::cerr << "Implausible EC temperature "
                 << static_cast<int>(temperature) << "°C; skipping fan update\n";
-      if (ecFailureLimitReached(consecutiveEcFailures)) {
-        std::cerr << "Too many consecutive implausible EC temperatures; "
-                     "stopping fan control\n";
+      if (ecFailureLimitReached(ecFailureState, NOW)) {
+        std::cerr
+            << "Implausible EC temperatures persisted beyond the recovery "
+               "grace period; stopping fan control\n";
         restoreAutomaticFanControl(ec);
         return EXIT_FAILURE;
+      }
+      if (WATCHDOG_ENABLED) {
+        sd_notify(0, "WATCHDOG=1");
       }
       usleep(REFRESH_RATE_MS * 1000);
       continue;
@@ -144,11 +152,23 @@ int main(int argc, const char *argv[]) {
           &observedFanSpeed);
       if (status != EcStatus::Success) {
         std::cerr << "EC fan write failed: " << ecStatusMessage(status) << '\n';
-        if (ecFailureLimitReached(consecutiveEcFailures)) {
+        if (status == EcStatus::FanSpeedMismatch) {
+          std::cerr << "Fan verification requested " << DYNAMIC_FAN_SPEED
+                    << " (EC-normalized "
+                    << static_cast<int>(
+                           normalizeClevoFanSpeed(DYNAMIC_FAN_SPEED))
+                    << ") but last observed "
+                    << static_cast<int>(observedFanSpeed) << '\n';
+        }
+        if (ecFailureLimitReached(ecFailureState, NOW)) {
           std::cerr
-              << "Too many consecutive EC failures; stopping fan control\n";
+              << "EC failures persisted beyond the recovery grace period; "
+                 "stopping fan control\n";
           restoreAutomaticFanControl(ec);
           return EXIT_FAILURE;
+        }
+        if (WATCHDOG_ENABLED) {
+          sd_notify(0, "WATCHDOG=1");
         }
         usleep(REFRESH_RATE_MS * 1000);
         continue;
@@ -162,7 +182,7 @@ int main(int argc, const char *argv[]) {
                 << "%\n";
 #endif
     }
-    resetEcFailures(consecutiveEcFailures);
+    resetEcFailures(ecFailureState);
     lastFanSpeed = DYNAMIC_FAN_SPEED;
     if (lastStatusLog == 0 || NOW > lastStatusLog + STATUS_LOG_INTERVAL_MS) {
       std::clog << "T:" << TEMP << "°C | requested fan " << DYNAMIC_FAN_SPEED
